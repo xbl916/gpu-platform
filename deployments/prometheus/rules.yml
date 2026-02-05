@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gpu-platform-rules
+  namespace: gpu-platform
+data:
+  gpu-alerts.yml: |
+    groups:
+      - name: gpu-platform.rules
+        rules:
+          - alert: GPUHighTemperature
+            expr: nvidia_gpu_temperature_celsius > 85
+            for: 5m
+            labels:
+              severity: warning
+              team: gpu-platform
+            annotations:
+              summary: "GPU temperature is high"
+              description: "GPU temperature is {{ $value }}°C"
+
+          - alert: GPUMemoryHigh
+            expr: (nvidia_gpu_memory_used_bytes / nvidia_gpu_memory_total_bytes) > 0.9
+            for: 10m
+            labels:
+              severity: warning
+              team: gpu-platform
+            annotations:
+              summary: "GPU memory usage is high"
+              description: "GPU memory usage is {{ $value | humanize1024 }}"
+
+          - alert: ContainerDown
+            expr: kube_pod_container_status_ready == 0
+            for: 5m
+            labels:
+              severity: critical
+              team: gpu-platform
+            annotations:
+              summary: "Container is not ready"

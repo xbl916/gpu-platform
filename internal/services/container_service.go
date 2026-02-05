@@ -31,20 +31,6 @@ type ContainerService struct {
 	k8sClient     *k8s.K8sClient
 }
 
-func NewContainerService(
-	cfg *config.Config,
-	containerRepo *repository.ContainerRepository,
-	resourceSvc *ResourceService,
-	k8sClient *k8s.K8sClient,
-) *ContainerService {
-	return &ContainerService{
-		cfg:           cfg,
-		containerRepo: containerRepo,
-		resourceSvc:   resourceSvc,
-		k8sClient:     k8sClient,
-	}
-}
-
 type CreateContainerRequest struct {
 	Name        string
 	UserID      uuid.UUID
@@ -67,6 +53,20 @@ type SSHInfo struct {
 	User string
 }
 
+func NewContainerService(
+	cfg *config.Config,
+	containerRepo *repository.ContainerRepository,
+	resourceSvc *ResourceService,
+	k8sClient *k8s.K8sClient,
+) *ContainerService {
+	return &ContainerService{
+		cfg:           cfg,
+		containerRepo: containerRepo,
+		resourceSvc:   resourceSvc,
+		k8sClient:     k8sClient,
+	}
+}
+
 func (s *ContainerService) CreateContainer(ctx context.Context, req *CreateContainerRequest) (*ContainerResponse, error) {
 	if err := s.validateCreateRequest(req); err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func (s *ContainerService) CreateContainer(ctx context.Context, req *CreateConta
 		Priority:  0,
 	}
 
-	server, devices, err := s.resourceSvc.AllocateResources(ctx, allocationReq)
+	server, _, err := s.resourceSvc.AllocateResources(ctx, allocationReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate resources: %w", err)
 	}
@@ -106,21 +106,57 @@ func (s *ContainerService) CreateContainer(ctx context.Context, req *CreateConta
 
 	err = s.containerRepo.Create(ctx, instance)
 	if err != nil {
-		s.resourceSvc.ReleaseResources(server.ID, req.Resources.GPUCount)
 		return nil, fmt.Errorf("failed to create container record: %w", err)
 	}
 
-	go s.createAndStartContainer(context.Background(), instance, server, devices)
+	if s.k8sClient != nil {
+		go s.createAndStartContainer(context.Background(), instance, server)
+	}
 
 	return &ContainerResponse{
 		Instance: instance,
-		WebURL:   fmt.Sprintf("https://%s:%d", server.IPAddress, instance.WebPort),
+		WebURL:   fmt.Sprintf("http://%s:%d", server.Hostname, instance.WebPort),
 		SSHInfo: SSHInfo{
-			Host: server.IPAddress,
+			Host: server.Hostname,
 			Port: instance.SSHPort,
 			User: "root",
 		},
 	}, nil
+}
+
+func (s *ContainerService) createAndStartContainer(ctx context.Context, instance *models.ContainerInstance, server *models.GPUServer) {
+	s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusCreating)
+
+	podName := fmt.Sprintf("gpu-instance-%s", instance.ID.String()[:8])
+	resources := k8s.ResourceRequirements{
+		CPU:    instance.Resources.CPUCores,
+		Memory: instance.Resources.MemoryMB,
+	}
+
+	podInfo, err := s.k8sClient.CreatePod(ctx, podName, instance.Resources.Image, instance.Resources.GPUCount, resources)
+	if err != nil {
+		s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusError)
+		return
+	}
+
+	err = s.containerRepo.Update(ctx, &models.ContainerInstance{
+		ID:        instance.ID,
+		PodName:   podInfo.Name,
+		IPAddress: podInfo.IP,
+		Status:    models.InstanceStatusCreating,
+	})
+	if err != nil {
+		s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusError)
+		return
+	}
+
+	err = s.k8sClient.WaitForReady(ctx, podInfo.Name, 5*time.Minute)
+	if err != nil {
+		s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusError)
+		return
+	}
+
+	s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusRunning)
 }
 
 func (s *ContainerService) GetContainer(ctx context.Context, id uuid.UUID) (*models.ContainerInstance, error) {
@@ -141,16 +177,24 @@ func (s *ContainerService) StartContainer(ctx context.Context, id uuid.UUID) err
 		return err
 	}
 
-	if instance.Status != models.InstanceStatusStopped && instance.Status != models.InstanceStatusPending {
+	if !s.isStopped(instance.Status) {
 		return fmt.Errorf("cannot start container in status: %s", instance.Status)
 	}
 
-	err = s.containerRepo.UpdateStatus(ctx, id, models.InstanceStatusCreating)
+	err = s.containerRepo.UpdateStatus(ctx, id, models.InstanceStatusPending)
 	if err != nil {
 		return err
 	}
 
-	go s.startContainerAsync(context.Background(), instance)
+	if s.k8sClient != nil && instance.PodName != "" {
+		err = s.k8sClient.WaitForReady(ctx, instance.PodName, 2*time.Minute)
+		if err != nil {
+			s.containerRepo.UpdateStatus(ctx, id, models.InstanceStatusError)
+			return err
+		}
+
+		s.containerRepo.UpdateStatus(ctx, id, models.InstanceStatusRunning)
+	}
 
 	return nil
 }
@@ -165,14 +209,21 @@ func (s *ContainerService) StopContainer(ctx context.Context, id uuid.UUID) erro
 		return ErrContainerNotRunning
 	}
 
-	err = s.containerRepo.UpdateStatus(ctx, id, models.InstanceStatusStopping)
+	if s.k8sClient != nil && instance.PodName != "" {
+		err = s.k8sClient.DeletePod(ctx, instance.PodName)
+		if err != nil {
+			return fmt.Errorf("failed to delete pod: %w", err)
+		}
+	}
+
+	now := time.Now()
+	instance.StoppedAt = &now
+	err = s.containerRepo.Update(ctx, instance)
 	if err != nil {
 		return err
 	}
 
-	go s.stopContainerAsync(context.Background(), instance)
-
-	return nil
+	return s.containerRepo.UpdateStatus(ctx, id, models.InstanceStatusStopped)
 }
 
 func (s *ContainerService) RestartContainer(ctx context.Context, id uuid.UUID) error {
@@ -181,7 +232,7 @@ func (s *ContainerService) RestartContainer(ctx context.Context, id uuid.UUID) e
 		return err
 	}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	return s.StartContainer(ctx, id)
 }
@@ -196,7 +247,11 @@ func (s *ContainerService) DeleteContainer(ctx context.Context, id uuid.UUID) er
 		return errors.New("cannot delete running container, stop it first")
 	}
 
-	err = s.containerRepo.UpdateStatus(ctx, id, models.InstanceStatusDeleted)
+	if s.k8sClient != nil && instance.PodName != "" {
+		s.k8sClient.DeletePod(ctx, instance.PodName)
+	}
+
+	err = s.containerRepo.Delete(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -212,11 +267,11 @@ func (s *ContainerService) GetContainerLogs(ctx context.Context, id uuid.UUID, t
 		return nil, err
 	}
 
-	if s.k8sClient == nil {
-		return []string{"Container logs not available"}, nil
+	if s.k8sClient == nil || instance.PodName == "" {
+		return []string{"Logs not available"}, nil
 	}
 
-	return s.k8sClient.GetPodLogs(ctx, instance.PodName, s.cfg.Kubernetes.Namespace, tailLines)
+	return s.k8sClient.GetPodLogs(ctx, instance.PodName, int64(tailLines))
 }
 
 func (s *ContainerService) ExecCommand(ctx context.Context, id uuid.UUID, command []string) ([]string, error) {
@@ -229,11 +284,11 @@ func (s *ContainerService) ExecCommand(ctx context.Context, id uuid.UUID, comman
 		return nil, ErrContainerNotRunning
 	}
 
-	if s.k8sClient == nil {
+	if s.k8sClient == nil || instance.PodName == "" {
 		return []string{"Command execution not available"}, nil
 	}
 
-	return s.k8sClient.ExecCommand(ctx, instance.PodName, s.cfg.Kubernetes.Namespace, command)
+	return s.k8sClient.ExecCommand(ctx, instance.PodName, command)
 }
 
 func (s *ContainerService) GetContainerMetrics(ctx context.Context, id uuid.UUID) (*models.ContainerMetrics, error) {
@@ -242,23 +297,22 @@ func (s *ContainerService) GetContainerMetrics(ctx context.Context, id uuid.UUID
 		return nil, err
 	}
 
-	if s.k8sClient == nil {
-		return &models.ContainerMetrics{}, nil
-	}
-
-	k8sMetrics, err := s.k8sClient.GetPodMetrics(ctx, instance.PodName, s.cfg.Kubernetes.Namespace)
-	if err != nil {
-		return &models.ContainerMetrics{}, nil
+	if s.k8sClient == nil || instance.PodName == "" {
+		return &models.ContainerMetrics{
+			CPUUsage:      0,
+			MemoryUsageMB: 0,
+		}, nil
 	}
 
 	return &models.ContainerMetrics{
-		CPUUsage:      k8sMetrics.CPUUsage,
-		MemoryUsageMB: k8sMetrics.MemoryUsageMB,
+		CPUUsage:      0,
+		MemoryUsageMB: 0,
+		RecordedAt:    time.Now(),
 	}, nil
 }
 
 func (s *ContainerService) validateCreateRequest(req *CreateContainerRequest) error {
-	if req.Name == "" || len(req.Name) < 3 || len(req.Name) > 63 {
+	if len(req.Name) < 3 || len(req.Name) > 63 {
 		return fmt.Errorf("%w: name must be 3-63 characters", ErrInvalidContainerReq)
 	}
 	if req.Resources.GPUCount <= 0 {
@@ -273,121 +327,8 @@ func (s *ContainerService) validateCreateRequest(req *CreateContainerRequest) er
 	return nil
 }
 
-func (s *ContainerService) createAndStartContainer(ctx context.Context, instance *models.ContainerInstance, server *models.GPUServer, devices []models.GPUDevice) {
-	s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusCreating)
-
-	podConfig := s.buildPodConfig(instance, server, devices)
-	podName, err := s.k8sClient.CreatePod(ctx, podConfig)
-	if err != nil {
-		s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusError)
-		return
-	}
-
-	instance.PodName = podName
-	instance.ContainerID = podName
-	s.containerRepo.Update(ctx, instance)
-
-	err = s.k8sClient.WaitForPodReady(ctx, podName, s.cfg.Kubernetes.Namespace, 5*time.Minute)
-	if err != nil {
-		s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusError)
-		return
-	}
-
-	s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusRunning)
-}
-
-func (s *ContainerService) startContainerAsync(ctx context.Context, instance *models.ContainerInstance) {
-	s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusRunning)
-}
-
-func (s *ContainerService) stopContainerAsync(ctx context.Context, instance *models.ContainerInstance) {
-	err := s.k8sClient.StopPod(ctx, instance.PodName, s.cfg.Kubernetes.Namespace)
-	if err != nil {
-		s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusError)
-		return
-	}
-
-	now := time.Now()
-	instance.StoppedAt = &now
-	s.containerRepo.UpdateStatus(ctx, instance.ID, models.InstanceStatusStopped)
-}
-
-func (s *ContainerService) buildPodConfig(instance *models.ContainerInstance, server *models.GPUServer, devices []models.GPUDevice) *k8s.PodConfig {
-	gpuIndices := make([]int, len(devices))
-	for i := range devices {
-		gpuIndices[i] = i
-	}
-	instance.Resources.GPUIndices = gpuIndices
-
-	return &k8s.PodConfig{
-		Name:      fmt.Sprintf("gpu-instance-%s", instance.ID.String()[:8]),
-		Namespace: s.cfg.Kubernetes.Namespace,
-		Labels: map[string]string{
-			"app":                      "gpu-instance",
-			"gpu-platform.io/instance": instance.ID.String(),
-			"gpu-platform.io/user":     instance.UserID.String(),
-		},
-		Annotations: map[string]string{
-			"gpu-platform.io/gpu-count": fmt.Sprintf("%d", instance.Resources.GPUCount),
-		},
-		Container: k8s.ContainerConfig{
-			Name:    "main",
-			Image:   instance.Resources.Image,
-			Command: []string{"/bin/bash"},
-			Args:    []string{"-c", instance.Resources.Command},
-			Env: []k8s.EnvVar{
-				{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"},
-				{Name: "NVIDIA_DRIVER_CAPABILITIES", Value: "compute,utility"},
-				{Name: "CUDA_VISIBLE_DEVICES", Value: fmt.Sprintf("%v", gpuIndices)},
-				{Name: "USER_ID", Value: instance.UserID.String()},
-				{Name: "INSTANCE_ID", Value: instance.ID.String()},
-			},
-			Resources: k8s.ResourceRequirements{
-				Limits: k8s.ResourceList{
-					"nvidia.com/gpu": fmt.Sprintf("%d", instance.Resources.GPUCount),
-					"cpu":            fmt.Sprintf("%d", instance.Resources.CPUCores),
-					"memory":         fmt.Sprintf("%dMi", instance.Resources.MemoryMB),
-				},
-				Requests: k8s.ResourceList{
-					"nvidia.com/gpu": fmt.Sprintf("%d", instance.Resources.GPUCount),
-					"cpu":            fmt.Sprintf("%d", instance.Resources.CPUCores),
-					"memory":         fmt.Sprintf("%dMi", instance.Resources.MemoryMB),
-				},
-			},
-			VolumeMounts: []k8s.VolumeMount{
-				{Name: "workspace", MountPath: "/workspace"},
-				{Name: "data", MountPath: "/data"},
-			},
-			Ports: []k8s.ContainerPort{
-				{Name: "ssh", ContainerPort: 22},
-				{Name: "jupyter", ContainerPort: 8888},
-			},
-		},
-		Volumes: []k8s.Volume{
-			{
-				Name: "workspace",
-				PersistentVolumeClaim: &k8s.PersistentVolumeClaimSource{
-					ClaimName: fmt.Sprintf("workspace-%s", instance.ID.String()[:8]),
-					SizeGB:    s.cfg.Container.WorkspaceSizeGB,
-				},
-			},
-			{
-				Name: "data",
-				PersistentVolumeClaim: &k8s.PersistentVolumeClaimSource{
-					ClaimName: fmt.Sprintf("data-%s", instance.ID.String()[:8]),
-					SizeGB:    s.cfg.Container.DataSizeGB,
-				},
-			},
-		},
-		NodeSelector: map[string]string{
-			"kubernetes.io/hostname": server.Hostname,
-		},
-		Tolerations: []k8s.Toleration{
-			{
-				Key:      "gpu",
-				Operator: "Exists",
-				Effect:   "NoSchedule",
-			},
-		},
-	}
+func (s *ContainerService) isStopped(status models.InstanceStatus) bool {
+	return status == models.InstanceStatusStopped ||
+		status == models.InstanceStatusPending ||
+		status == models.InstanceStatusError
 }

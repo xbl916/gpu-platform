@@ -1,8 +1,11 @@
 package k8s
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"gpu-platform/internal/config"
@@ -10,15 +13,17 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 type K8sClient struct {
 	client    *kubernetes.Clientset
-	config    *config.KubernetesConfig
 	namespace string
+	config    *rest.Config
 }
 
 func NewK8sClient(cfg *config.KubernetesConfig) (*K8sClient, error) {
@@ -32,7 +37,7 @@ func NewK8sClient(cfg *config.KubernetesConfig) (*K8sClient, error) {
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to load kubernetes config: %w", err)
+		return nil, fmt.Errorf("failed to get kubernetes config: %w", err)
 	}
 
 	clientset, err := kubernetes.NewForConfig(k8sConfig)
@@ -42,275 +47,235 @@ func NewK8sClient(cfg *config.KubernetesConfig) (*K8sClient, error) {
 
 	return &K8sClient{
 		client:    clientset,
-		config:    cfg,
 		namespace: cfg.Namespace,
+		config:    k8sConfig,
 	}, nil
 }
 
-func (c *K8sClient) CreatePod(ctx context.Context, config *PodConfig) (string, error) {
+func (c *K8sClient) CreatePod(ctx context.Context, name string, image string, gpuCount int, resources ResourceRequirements) (*PodInfo, error) {
+	gpuResource := fmt.Sprintf("%d", gpuCount)
+
 	pod := &v1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        config.Name,
-			Namespace:   config.Namespace,
-			Labels:      config.Labels,
-			Annotations: config.Annotations,
+			Name:      name,
+			Namespace: c.namespace,
+			Labels: map[string]string{
+				"app":                       name,
+				"gpu-platform.io/container": name,
+			},
 		},
 		Spec: v1.PodSpec{
 			RestartPolicy: v1.RestartPolicyAlways,
-			Containers:    []v1.Container{c.buildContainer(&config.Container)},
-			Volumes:       c.buildVolumes(config.Volumes),
-			NodeSelector:  config.NodeSelector,
-			Tolerations:   c.buildTolerations(config.Tolerations),
+			Containers: []v1.Container{
+				{
+					Name:            "main",
+					Image:           image,
+					ImagePullPolicy: v1.PullIfNotPresent,
+					Command:         []string{"/bin/bash", "-c"},
+					Args:            []string{"while true; do sleep 3600; done"},
+					Env: []v1.EnvVar{
+						{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"},
+						{Name: "NVIDIA_DRIVER_CAPABILITIES", Value: "compute,utility"},
+					},
+					Resources: v1.ResourceRequirements{
+						Limits: v1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse(gpuResource),
+							"cpu":            resource.MustParse(fmt.Sprintf("%d", resources.CPU)),
+							"memory":         resource.MustParse(fmt.Sprintf("%dMi", resources.Memory)),
+						},
+						Requests: v1.ResourceList{
+							"nvidia.com/gpu": resource.MustParse(gpuResource),
+							"cpu":            resource.MustParse(fmt.Sprintf("%d", resources.CPU)),
+							"memory":         resource.MustParse(fmt.Sprintf("%dMi", resources.Memory)),
+						},
+					},
+					Ports: []v1.ContainerPort{
+						{ContainerPort: 22, Name: "ssh"},
+						{ContainerPort: 8888, Name: "jupyter"},
+					},
+					VolumeMounts: []v1.VolumeMount{
+						{Name: "workspace", MountPath: "/workspace"},
+					},
+				},
+			},
+			Volumes: []v1.Volume{
+				{
+					Name: "workspace",
+					VolumeSource: v1.VolumeSource{
+						PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+							ClaimName: fmt.Sprintf("workspace-%s", name),
+						},
+					},
+				},
+			},
+			Tolerations: []v1.Toleration{
+				{Key: "gpu", Operator: v1.TolerationOpExists, Effect: v1.TaintEffectNoSchedule},
+			},
 		},
 	}
 
-	result, err := c.client.CoreV1().Pods(config.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	result, err := c.client.CoreV1().Pods(c.namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to create pod: %w", err)
+		return nil, fmt.Errorf("failed to create pod: %w", err)
 	}
 
-	return result.Name, nil
+	return &PodInfo{
+		Name:      result.Name,
+		Namespace: result.Namespace,
+		IP:        result.Status.PodIP,
+	}, nil
 }
 
-func (c *K8sClient) GetPod(ctx context.Context, name, namespace string) (*v1.Pod, error) {
-	pod, err := c.client.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+func (c *K8sClient) GetPod(ctx context.Context, name string) (*PodInfo, error) {
+	pod, err := c.client.CoreV1().Pods(c.namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pod: %w", err)
 	}
-	return pod, nil
+
+	return &PodInfo{
+		Name:      pod.Name,
+		Namespace: pod.Namespace,
+		IP:        pod.Status.PodIP,
+		Status:    string(pod.Status.Phase),
+	}, nil
 }
 
-func (c *K8sClient) DeletePod(ctx context.Context, name, namespace string) error {
-	err := c.client.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+func (c *K8sClient) DeletePod(ctx context.Context, name string) error {
+	err := c.client.CoreV1().Pods(c.namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to delete pod: %w", err)
 	}
 	return nil
 }
 
-func (c *K8sClient) StopPod(ctx context.Context, name, namespace string) error {
-	return c.DeletePod(ctx, name, namespace)
-}
+func (c *K8sClient) WaitForReady(ctx context.Context, name string, timeout time.Duration) error {
+	return wait.PollImmediate(5*time.Second, timeout, func() (bool, error) {
+		pod, err := c.client.CoreV1().Pods(c.namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
 
-func (c *K8sClient) WaitForPodReady(ctx context.Context, name, namespace string, timeout time.Duration) error {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	deadline := time.After(timeout)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline:
-			return fmt.Errorf("timeout waiting for pod to be ready")
-		case <-ticker.C:
-			pod, err := c.GetPod(ctx, name, namespace)
-			if err != nil {
-				continue
-			}
-
-			if isPodReady(pod) {
-				return nil
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
+				return true, nil
 			}
 		}
-	}
+		return false, nil
+	})
 }
 
-func (c *K8sClient) GetPodLogs(ctx context.Context, name, namespace string, tailLines int) ([]string, error) {
-	tailLines64 := int64(tailLines)
-	logOptions := &v1.PodLogOptions{
-		TailLines: &tailLines64,
-	}
+func (c *K8sClient) GetPodLogs(ctx context.Context, name string, tailLines int64) ([]string, error) {
+	logOptions := &v1.PodLogOptions{TailLines: &tailLines}
+	req := c.client.CoreV1().Pods(c.namespace).GetLogs(name, logOptions)
 
-	req := c.client.CoreV1().Pods(namespace).GetLogs(name, logOptions)
 	logs, err := req.Do(ctx).Raw()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get pod logs: %w", err)
+		return nil, fmt.Errorf("failed to get logs: %w", err)
 	}
 
-	return []string{string(logs)}, nil
-}
-
-func (c *K8sClient) ExecCommand(ctx context.Context, name, namespace string, command []string) ([]string, error) {
-	return []string{"Command execution disabled"}, nil
-}
-
-func (c *K8sClient) GetPodMetrics(ctx context.Context, name, namespace string) (*ContainerMetrics, error) {
-	return &ContainerMetrics{}, nil
-}
-
-func (c *K8sClient) buildContainer(config *ContainerConfig) v1.Container {
-	container := v1.Container{
-		Name:            config.Name,
-		Image:           config.Image,
-		ImagePullPolicy: v1.PullIfNotPresent,
-		Command:         config.Command,
-		Args:            config.Args,
-		Ports:           c.buildContainerPorts(config.Ports),
-		Env:             c.buildEnvVars(config.Env),
-		Resources:       c.buildResourceRequirements(&config.Resources),
-		VolumeMounts:    c.buildVolumeMounts(config.VolumeMounts),
+	var lines []string
+	scanner := bufio.NewScanner(bytes.NewReader(logs))
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
 	}
 
-	return container
+	return lines, nil
 }
 
-func (c *K8sClient) buildContainerPorts(ports []ContainerPort) []v1.ContainerPort {
-	var result []v1.ContainerPort
-	for _, p := range ports {
-		result = append(result, v1.ContainerPort{
-			Name:          p.Name,
-			ContainerPort: p.ContainerPort,
-			Protocol:      v1.ProtocolTCP,
-		})
-	}
-	return result
-}
+func (c *K8sClient) ExecCommand(ctx context.Context, podName string, command []string) ([]string, error) {
+	req := c.client.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(c.namespace).
+		SubResource("exec")
 
-func (c *K8sClient) buildEnvVars(envs []EnvVar) []v1.EnvVar {
-	var result []v1.EnvVar
-	for _, e := range envs {
-		result = append(result, v1.EnvVar{
-			Name:  e.Name,
-			Value: e.Value,
-		})
-	}
-	return result
-}
-
-func (c *K8sClient) buildResourceRequirements(req *ResourceRequirements) v1.ResourceRequirements {
-	resources := v1.ResourceRequirements{
-		Limits:   v1.ResourceList{},
-		Requests: v1.ResourceList{},
+	option := &v1.PodExecOptions{
+		Command: []string{"/bin/sh", "-c"},
+		Stdout:  true,
+		Stderr:  true,
 	}
 
-	for name, quantity := range req.Limits {
-		qty, _ := resource.ParseQuantity(quantity)
-		resources.Limits[v1.ResourceName(name)] = qty
+	req.VersionedParams(option, metav1.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(c.config, "POST", req.URL())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create executor: %w", err)
 	}
 
-	for name, quantity := range req.Requests {
-		qty, _ := resource.ParseQuantity(quantity)
-		resources.Requests[v1.ResourceName(name)] = qty
-	}
+	var stdout, stderr bytes.Buffer
+	err = exec.Stream(remotecommand.StreamOptions{
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Tty:    false,
+	})
 
-	return resources
-}
-
-func (c *K8sClient) buildVolumeMounts(mounts []VolumeMount) []v1.VolumeMount {
-	var result []v1.VolumeMount
-	for _, m := range mounts {
-		result = append(result, v1.VolumeMount{
-			Name:      m.Name,
-			MountPath: m.MountPath,
-		})
-	}
-	return result
-}
-
-func (c *K8sClient) buildVolumes(volumes []Volume) []v1.Volume {
-	var result []v1.Volume
-	for _, v := range volumes {
-		volume := v1.Volume{
-			Name: v.Name,
-		}
-
-		if v.PersistentVolumeClaim != nil {
-			volume.PersistentVolumeClaim = &v1.PersistentVolumeClaimVolumeSource{
-				ClaimName: v.PersistentVolumeClaim.ClaimName,
-			}
-		}
-
-		result = append(result, volume)
-	}
-	return result
-}
-
-func (c *K8sClient) buildTolerations(tolerations []Toleration) []v1.Toleration {
-	var result []v1.Toleration
-	for _, t := range tolerations {
-		result = append(result, v1.Toleration{
-			Key:      t.Key,
-			Operator: v1.TolerationOperator(t.Operator),
-			Value:    t.Value,
-			Effect:   v1.TaintEffect(t.Effect),
-		})
-	}
-	return result
-}
-
-func isPodReady(pod *v1.Pod) bool {
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == v1.PodReady && condition.Status == v1.ConditionTrue {
-			return true
+	var output []string
+	for _, line := range strings.Split(stdout.String(), "\n") {
+		if line != "" {
+			output = append(output, line)
 		}
 	}
-	return false
+
+	if stderr.Len() > 0 {
+		output = append(output, "STDERR: "+stderr.String())
+	}
+
+	return output, err
 }
 
-type PodConfig struct {
-	Name         string
-	Namespace    string
-	Labels       map[string]string
-	Annotations  map[string]string
-	Container    ContainerConfig
-	Volumes      []Volume
-	NodeSelector map[string]string
-	Tolerations  []Toleration
+func (c *K8sClient) CreatePVC(ctx context.Context, name string, sizeGi int) error {
+	pvc := &v1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: c.namespace,
+		},
+		Spec: v1.PersistentVolumeClaimSpec{
+			AccessModes: []v1.PersistentVolumeAccessMode{v1.ReadWriteOnce},
+			Resources: v1.ResourceRequirements{
+				Requests: v1.ResourceList{
+					v1.ResourceStorage: resource.MustParse(fmt.Sprintf("%dGi", sizeGi)),
+				},
+			},
+		},
+	}
+
+	_, err := c.client.CoreV1().PersistentVolumeClaims(c.namespace).Create(ctx, pvc, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to create pvc: %w", err)
+	}
+
+	return nil
 }
 
-type ContainerConfig struct {
-	Name         string
-	Image        string
-	Command      []string
-	Args         []string
-	Env          []EnvVar
-	Resources    ResourceRequirements
-	VolumeMounts []VolumeMount
-	Ports        []ContainerPort
+func (c *K8sClient) ListPods(ctx context.Context, labelSelector string) ([]PodInfo, error) {
+	pods, err := c.client.CoreV1().Pods(c.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	var result []PodInfo
+	for _, pod := range pods.Items {
+		result = append(result, PodInfo{
+			Name:      pod.Name,
+			Namespace: pod.Namespace,
+			IP:        pod.Status.PodIP,
+			Status:    string(pod.Status.Phase),
+		})
+	}
+
+	return result, nil
 }
 
-type EnvVar struct {
-	Name  string
-	Value string
+type PodInfo struct {
+	Name      string
+	Namespace string
+	IP        string
+	Status    string
 }
 
 type ResourceRequirements struct {
-	Limits   ResourceList
-	Requests ResourceList
-}
-
-type ResourceList map[string]string
-
-type VolumeMount struct {
-	Name      string
-	MountPath string
-}
-
-type ContainerPort struct {
-	Name          string
-	ContainerPort int32
-}
-
-type Volume struct {
-	Name                  string
-	PersistentVolumeClaim *PersistentVolumeClaimSource
-}
-
-type PersistentVolumeClaimSource struct {
-	ClaimName string
-	SizeGB    int
-}
-
-type Toleration struct {
-	Key      string
-	Operator string
-	Value    string
-	Effect   string
-}
-
-type ContainerMetrics struct {
-	CPUUsage      float64
-	MemoryUsageMB int
+	CPU    int
+	Memory int
 }
