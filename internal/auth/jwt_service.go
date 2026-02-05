@@ -9,6 +9,7 @@ import (
 	"gpu-platform/internal/models"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -96,7 +97,33 @@ func (s *JWTService) ValidateToken(tokenString string) (*TokenClaims, error) {
 }
 
 func (s *JWTService) RefreshTokenPair(refreshToken string) (accessToken, newRefreshToken string, err error) {
-	return "", "", nil
+	claims, err := s.ValidateToken(refreshToken)
+	if err != nil {
+		return "", "", err
+	}
+
+	user := &models.User{
+		ID:    uuid.MustParse(claims.UserID),
+		Email: claims.Email,
+		Role:  claims.Role,
+	}
+
+	if claims.ProjectID != "" {
+		projectID := uuid.MustParse(claims.ProjectID)
+		user.ProjectID = &projectID
+	}
+
+	accessToken, err = s.GenerateAccessToken(user)
+	if err != nil {
+		return "", "", err
+	}
+
+	newRefreshToken, err = s.GenerateRefreshToken(user)
+	if err != nil {
+		return "", "", err
+	}
+
+	return accessToken, newRefreshToken, nil
 }
 
 type PasswordService struct {

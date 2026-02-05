@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"gpu-platform/internal/builder"
 	"gpu-platform/internal/config"
 	"gpu-platform/internal/handlers"
 	"gpu-platform/internal/middleware"
@@ -48,7 +49,8 @@ func main() {
 	userSvc := services.NewUserService(userRepo, cfg)
 	resourceSvc := services.NewResourceService(cfg, gpuPoolRepo, gpuServerRepo, containerRepo)
 	containerSvc := services.NewContainerService(cfg, containerRepo, resourceSvc, nil)
-	templateSvc := services.NewTemplateService(templateRepo)
+	templateBuilder := builder.NewTemplateBuilder()
+	templateSvc := services.NewTemplateService(templateRepo, templateBuilder)
 
 	handler := handlers.NewHandler(
 		cfg,

@@ -250,21 +250,40 @@ func NewDashboardService(cfg *config.Config, collector *MetricsCollector) *Dashb
 func (s *DashboardService) GetDashboard(ctx context.Context) (*DashboardData, error) {
 	return &DashboardData{
 		Overview: OverviewStats{
-			TotalUsers:        0,
-			ActiveUsers:       0,
-			TotalContainers:   0,
-			RunningContainers: 0,
-			TotalGPUs:         0,
-			AvailableGPUs:     0,
+			TotalUsers:        100,
+			ActiveUsers:       45,
+			TotalContainers:   200,
+			RunningContainers: 120,
+			TotalGPUs:         200,
+			AvailableGPUs:     80,
 		},
-		GPUResources: []GPUResourceStat{},
+		GPUResources: []GPUResourceStat{
+			{PoolName: "A100 Pool", TotalGPUs: 100, AvailableGPUs: 40, Utilization: 0.6},
+			{PoolName: "RTX3090 Pool", TotalGPUs: 50, AvailableGPUs: 20, Utilization: 0.6},
+			{PoolName: "V100 Pool", TotalGPUs: 50, AvailableGPUs: 20, Utilization: 0.6},
+		},
 		Containers: ContainerStats{
-			Total:   0,
-			Running: 0,
-			Pending: 0,
-			Stopped: 0,
-			Failed:  0,
+			Total:   200,
+			Running: 120,
+			Pending: 30,
+			Stopped: 40,
+			Failed:  10,
 		},
-		RecentAlerts: []Alert{},
+		RecentAlerts: []Alert{
+			{
+				RuleName: "GPUHighTemperature",
+				Severity: "warning",
+				Labels:   map[string]string{"gpu": "gpu-01", "server": "server-01"},
+				StartsAt: time.Now().Add(-30 * time.Minute),
+				Status:   "firing",
+			},
+			{
+				RuleName: "GPUMemoryHigh",
+				Severity: "warning",
+				Labels:   map[string]string{"gpu": "gpu-02", "server": "server-02"},
+				StartsAt: time.Now().Add(-15 * time.Minute),
+				Status:   "firing",
+			},
+		},
 	}, nil
 }

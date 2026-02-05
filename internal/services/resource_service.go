@@ -297,3 +297,39 @@ func (s *ResourceService) refreshCache() {
 		}
 	}
 }
+
+func (s *ResourceService) GetUserQuota(ctx context.Context, userID uuid.UUID) (*QuotaInfo, error) {
+	quota, err := s.quotaManager.GetUserQuota(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	containers, _, err := s.containerRepo.FindByUserID(ctx, userID, 1000, 0)
+	if err != nil {
+		return quota, nil
+	}
+
+	usage := &QuotaInfo{}
+	for _, container := range containers {
+		if container.Status == models.InstanceStatusRunning || container.Status == models.InstanceStatusPending {
+			usage.UsedGPUCount += container.Resources.GPUCount
+			usage.UsedCPUCores += container.Resources.CPUCores
+			usage.UsedMemoryMB += container.Resources.MemoryMB
+			usage.UsedStorageGB += container.Resources.StorageGB
+			usage.UsedInstances++
+		}
+	}
+
+	return &QuotaInfo{
+		MaxGPUCount:   quota.MaxGPUCount,
+		MaxCPUCores:   quota.MaxCPUCores,
+		MaxMemoryMB:   quota.MaxMemoryMB,
+		MaxStorageGB:  quota.MaxStorageGB,
+		MaxInstances:  quota.MaxInstances,
+		UsedGPUCount:  usage.UsedGPUCount,
+		UsedCPUCores:  usage.UsedCPUCores,
+		UsedMemoryMB:  usage.UsedMemoryMB,
+		UsedStorageGB: usage.UsedStorageGB,
+		UsedInstances: usage.UsedInstances,
+	}, nil
+}

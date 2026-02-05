@@ -244,3 +244,11 @@ func (s *UserService) validateEmail(email string) error {
 	}
 	return nil
 }
+
+func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (string, string, error) {
+	accessToken, newRefreshToken, err := s.jwtSvc.RefreshTokenPair(refreshToken)
+	if err != nil {
+		return "", "", err
+	}
+	return accessToken, newRefreshToken, nil
+}

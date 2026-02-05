@@ -56,6 +56,7 @@ func (h *Handler) SetupRoutes(r *gin.Engine) {
 			users.GET("/me", h.GetCurrentUser)
 			users.PUT("/me", h.UpdateCurrentUser)
 			users.POST("/me/password", h.ChangePassword)
+			users.GET("/me/quota", h.GetQuotaUsage)
 		}
 
 		resources := api.Group("/resources")
@@ -85,7 +86,10 @@ func (h *Handler) SetupRoutes(r *gin.Engine) {
 			templates.GET("", h.ListTemplates)
 			templates.POST("", h.CreateTemplate)
 			templates.GET("/:id", h.GetTemplate)
+			templates.PUT("/:id", h.UpdateTemplate)
 			templates.DELETE("/:id", h.DeleteTemplate)
+			templates.POST("/:id/build", h.BuildTemplate)
+			templates.POST("/:id/publish", h.PublishTemplate)
 		}
 
 		monitor := api.Group("/monitor")
@@ -157,7 +161,24 @@ func (h *Handler) Logout(c *gin.Context) {
 }
 
 func (h *Handler) RefreshToken(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"message": "not implemented"})
+	var req struct {
+		RefreshToken string `json:"refreshToken" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	accessToken, newRefreshToken, err := h.userSvc.RefreshToken(c.Request.Context(), req.RefreshToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"accessToken":  accessToken,
+		"refreshToken": newRefreshToken,
+	})
 }
 
 func (h *Handler) GetCurrentUser(c *gin.Context) {
@@ -540,11 +561,49 @@ func (h *Handler) DeleteTemplate(c *gin.Context) {
 }
 
 func (h *Handler) BuildTemplate(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"message": "not implemented"})
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid template ID"})
+		return
+	}
+
+	userID := c.GetString("userID")
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	var req services.BuildTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp, err := h.templateSvc.BuildTemplate(c.Request.Context(), id, uid, &req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *Handler) PublishTemplate(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"message": "not implemented"})
+	idStr := c.Param("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid template ID"})
+		return
+	}
+
+	if err := h.templateSvc.PublishTemplate(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "template published successfully"})
 }
 
 func (h *Handler) GetDashboard(c *gin.Context) {
@@ -568,5 +627,18 @@ func (h *Handler) GetAlerts(c *gin.Context) {
 }
 
 func (h *Handler) GetQuotaUsage(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{"message": "not implemented"})
+	userID := c.GetString("userID")
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user ID"})
+		return
+	}
+
+	quota, err := h.resourceSvc.GetUserQuota(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, quota)
 }

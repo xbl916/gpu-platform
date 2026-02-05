@@ -109,8 +109,23 @@ export const templateService = {
     return response.data
   },
 
+  async update(id: string, data: { name: string; description?: string; config: any }) {
+    const response = await api.put(`/templates/${id}`, data)
+    return response.data
+  },
+
   async delete(id: string) {
     const response = await api.delete(`/templates/${id}`)
+    return response.data
+  },
+
+  async build(id: string, data: { baseImage?: string; pipPackages?: string[]; envVars?: Record<string, string> }) {
+    const response = await api.post(`/templates/${id}/build`, data)
+    return response.data
+  },
+
+  async publish(id: string) {
+    const response = await api.post(`/templates/${id}/publish`)
     return response.data
   },
 }
@@ -128,6 +143,11 @@ export const resourceService = {
 
   async listGPUServers() {
     const response = await api.get('/resources/gpu-servers')
+    return response.data
+  },
+
+  async getQuota() {
+    const response = await api.get('/users/me/quota')
     return response.data
   },
 }

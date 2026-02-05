@@ -36,7 +36,7 @@ interface DashboardData {
   }>
 }
 
-interface UserQuota {
+interface QuotaInfo {
   maxGPUCount: number
   maxCPUCores: number
   maxMemoryMB: number
@@ -54,7 +54,7 @@ const COLORS = ['#52c41a', '#1890ff', '#faad14', '#ff4d4f', '#722ed1', '#13c2c2'
 const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<DashboardData | null>(null)
-  const [quota, setQuota] = useState<UserQuota | null>(null)
+  const [quota, setQuota] = useState<QuotaInfo | null>(null)
   const navigate = useNavigate()
   const { user } = useAuthStore()
 
@@ -65,12 +65,13 @@ const Dashboard: React.FC = () => {
   const loadDashboardData = async () => {
     try {
       setLoading(true)
-      const [availability, dashboard] = await Promise.all([
+      const [availability, dashboard, quotaData] = await Promise.all([
         resourceService.getAvailability().catch(() => null),
         monitorService.getDashboard().catch(() => null),
+        resourceService.getQuota().catch(() => null),
       ])
 
-      const mockQuota: UserQuota = {
+      const userQuota: QuotaInfo = quotaData || {
         maxGPUCount: 8,
         maxCPUCores: 64,
         maxMemoryMB: 131072,
@@ -83,7 +84,7 @@ const Dashboard: React.FC = () => {
         usedInstances: 2,
       }
 
-      setQuota(mockQuota)
+      setQuota(userQuota)
       setData({
         overview: {
           totalContainers: dashboard?.overview?.totalContainers || 5,
@@ -141,7 +142,8 @@ const Dashboard: React.FC = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h2 style={{ margin: 0 }}>仪表盘</h2>
         <Space>
-          <Button icon={<SettingOutlined />} onClick={() => message.info('设置功能开发中')}>配额设置</Button>
+          <Button icon={<UserOutlined />} onClick={() => message.info('个人中心功能开发中')}>个人中心</Button>
+          <Button icon={<SettingOutlined />} onClick={() => message.info('设置功能开发中')}>设置</Button>
         </Space>
       </div>
 
