@@ -1,4 +1,4 @@
-# GPU Platform - GPU 容器化服务管理平台
+# GPU Platform - GPU Container Service Management Platform
 
 <div align="center">
 
@@ -8,483 +8,318 @@
 ![Kubernetes](https://img.shields.io/badge/Kubernetes-1.28-326CE5?style=flat-square&logo=kubernetes)
 ![Docker](https://img.shields.io/badge/Docker-24.0+-2496ED?style=flat-square&logo=docker)
 
-一个类似 AutoDL 的 GPU 容器化服务管理平台，支持 GPU 资源池管理、容器实例生命周期管理、容器模板定制等功能。
+A GPU container service management platform similar to AutoDL, supporting GPU resource pool management, container instance lifecycle management, and container template customization.
 
-[English](README.md) | 简体中文
+[English](README.en.md) | [简体中文](README.md)
 
 </div>
 
-## ✨ 功能特性
+## ✨ Features
 
-### 🎯 核心功能
+### 🎯 Core Features
 
-| 功能 | 描述 |
-|------|------|
-| **用户管理** | 用户注册、登录、JWT 认证、角色权限控制 |
-| **GPU 资源管理** | GPU 服务器管理、资源池配置、实时状态监控 |
-| **容器管理** | 创建、启动、停止、重启、删除容器实例 |
-| **模板市场** | 预置容器模板（PyTorch、TensorFlow 等）、自定义模板 |
-| **资源配额** | 用户资源配额管理、防止资源滥用 |
-| **监控告警** | GPU 温度、显存使用率、CPU/内存监控、告警通知 |
-
-## 📋 目录
-
-- [快速开始](#快速开始)
-- [连接到 Kubernetes 集群](#连接到-kubernetes-集群)
-- [安装 NVIDIA GPU Operator](#安装-nvidia-gpu-operator)
-- [部署 GPU Platform](#部署-gpu-platform)
-- [本地开发](#本地开发)
-- [生产环境配置](#生产环境配置)
-- [常见问题](#常见问题)
+| Feature | Description |
+|--------|-------------|
+| **User Management** | User registration, login, JWT authentication, role-based access control |
+| **GPU Resource Management** | GPU server management, resource pool configuration, real-time status monitoring |
+| **Container Management** | Create, start, stop, restart, and delete container instances |
+| **Template Marketplace** | Pre-built container templates (PyTorch, TensorFlow, etc.), custom templates |
+| **Resource Quotas** | User resource quota management to prevent resource abuse |
+| **Monitoring & Alerts** | GPU temperature, memory usage, CPU/memory monitoring, alert notifications |
+| **Project Management** | Multi-tenant isolation, project member management, resource sharing |
 
 ---
 
-## 🚀 快速开始
+## 📋 Table of Contents
 
-### 环境要求
-
-| 组件 | 要求 |
-|------|------|
-| **Kubernetes** | 1.20+ |
-| **kubectl** | 与集群版本兼容 |
-| **Helm** | 3.0+ |
-| **GPU 节点** | 至少 1 个带有 NVIDIA GPU 的节点 |
-| **存储** | PostgreSQL 14+, Redis 7+, MinIO/S3 |
+- [Quick Start](#quick-start)
+- [Environment Requirements](#environment-requirements)
+- [Pre-deployment Preparation](#pre-deployment-preparation)
+- [Database Initialization](#database-initialization)
+- [Configuration](#configuration)
+- [Starting Services](#starting-services)
+- [Development Environment](#development-environment)
+- [Production Deployment](#production-deployment)
+- [FAQ](#faq)
 
 ---
 
-## 🔗 连接到 Kubernetes 集群
+## 🚀 Quick Start
 
-在使用 GPU Platform 之前，你需要先配置好 kubectl 以连接到你的 Kubernetes 集群。
+### Environment Requirements
 
-### 方式一：云服务（阿里云、AWS、GCP）
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| Kubernetes | 1.20 | 1.28+ |
+| Go | 1.20 | 1.21+ |
+| Node.js | 16 | 20 LTS |
+| PostgreSQL | 12 | 15+ |
+| Redis | 6 | 7+ |
+| NVIDIA GPU Driver | 450.x | 535.x+ |
 
-#### 阿里云 ACK
+---
 
-```bash
-# 1. 安装 kubectl 和 ack 插件
-curl -LO https://aliyuncli.github.io/aliyun-cli-linux/latest/aliyun-cli-linux/latestPackages/aliyun-cli_3.0.196_linux_amd64.tar.gz
-tar -xzf aliyun-cli_3.0.196_linux_amd64.tar.gz
-sudo mv acs /usr/local/bin/
+## 🔧 Pre-deployment Preparation
 
-# 2. 登录阿里云
-aliyun configure \
-  --mode StsToken \
-  --profile default
-
-# 3. 获取 kubeconfig
-aliyuncs ack get-kubeconfig --clusterId <your-cluster-id> > ~/.kube/config
-
-# 4. 验证连接
-kubectl get nodes
-```
-
-#### AWS EKS
+### 1. Prepare Kubernetes Cluster
 
 ```bash
-# 1. 安装 eksctl
-curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-sudo mv /tmp/eksctl /usr/local/bin/
-
-# 2. 配置 AWS 凭证
-aws configure
-# 或使用 IAM Role
-
-# 3. 更新 kubeconfig
-aws eks update-kubeconfig --region <region> --name <cluster-name>
-
-# 4. 验证连接
-kubectl get nodes
-```
-
-#### GCP GKE
-
-```bash
-# 1. 安装 gcloud CLI
-curl https://sdk.cloud.google.com | bash
-exec -l $SHELL
-
-# 2. 登录
-gcloud auth login
-gcloud container clusters get-credentials <cluster-name> --zone <zone>
-
-# 3. 验证连接
-kubectl get nodes
-```
-
-### 方式二：自建集群（k3s、kubespray）
-
-#### k3s（轻量级推荐）
-
-```bash
-# 在 master 节点安装
-curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.28.4+k3s1 sh -
-
-# 获取 kubeconfig
-sudo cat /etc/rancher/k3s/k3s.yaml > ~/.kube/config
-
-# 在其他节点加入集群
-curl -sfL https://get.k3s.io | K3S_URL=https://<master-ip>:6443 K3S_TOKEN=<node-token> sh -
-```
-
-#### kubespray（生产级）
-
-```bash
-# 克隆仓库
-git clone https://github.com/kubernetes-sigs/kubespray.git
-cd kubespray
-
-# 配置 inventory
-cp -r inventory/sample inventory/mycluster
-vim inventory/mycluster/hosts.yaml
-
-# 配置 SSH 密钥
-ssh-copy-id user@<master-ip>
-
-# 部署集群
-ansible-playbook -i inventory/mycluster/hosts.yaml cluster.yml -b -v
-```
-
-### 方式三：minikube（仅测试用）
-
-```bash
-# 安装 minikube
-curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-sudo install minikube-linux-amd64 /usr/local/bin/minikube
-
-# 启动集群（需要 GPU 支持）
-minikube start --driver=nvidia-docker2
-
-# 或不使用 GPU
-minikube start --cpus=4 --memory=8192
-```
-
-### 验证集群连接
-
-```bash
-# 1. 检查节点
-kubectl get nodes -o wide
-
-# 预期输出示例:
-# NAME           STATUS   ROLES    AGE   VERSION   INTERNAL-IP    EXTERNAL-IP
-# gpu-node-1     Ready    master  10d   v1.28.4   10.0.0.11    <none>
-
-# 2. 检查集群信息
+# Check cluster connection
 kubectl cluster-info
 
-# 预期输出:
-# Kubernetes control plane is running at https://<api-server>:6443
+# Check node status
+kubectl get nodes
 
-# 3. 检查集群版本
-kubectl version --client
-kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}'
-
-# 4. 创建 namespace
+# Create dedicated namespace
 kubectl create namespace gpu-platform
-
-# 5. 检查 GPU 节点（如果有 GPU）
-kubectl get nodes -l accelerator=nvidia
 ```
 
-### 配置 kubeconfig（多集群场景）
+### 2. Install NVIDIA GPU Operator
 
 ```bash
-# 查看当前配置的集群
-kubectl config get-contexts
-
-# 添加新集群
-kubectl config set-cluster new-cluster \
-  --server=https://<api-server>:6443 \
-  --certificate-authority=/path/to/ca.crt
-
-# 设置凭证
-kubectl config set-credentials admin \
-  --token=<bearer-token>
-
-# 或使用 client-certificate
-kubectl config set-cluster new-cluster \
-  --server=https://<api-server>:6443 \
-  --certificate-authority=/path/to/ca.crt
-kubectl config set-credentials admin \
-  --client-certificate=/path/to/client.crt \
-  --client-key=/path/to/client.key
-
-# 切换集群
-kubectl config use-context new-cluster
-
-# 合并 kubeconfig（从其他集群复制）
-cat ~/.kube/config >> /shared/kubeconfig
-KUBECONFIG=/shared/kubeconfig kubectl config view --flatten > /merged-kubeconfig
-```
-
----
-
-## 🖥️ 安装 NVIDIA GPU Operator
-
-GPU Operator 是必需的组件，它负责在 GPU 节点上安装和管理 NVIDIA 驱动、容器工具包等。
-
-### 前置检查
-
-```bash
-# 1. 确认你有 GPU 节点
-kubectl get nodes -o wide | grep -i gpu
-
-# 或检查标签
-kubectl get nodes --show-labels | grep -i nvidia
-
-# 2. 如果没有 GPU 标签，需要安装 Node Feature Discovery (NFD)
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/node-feature-discovery/v0.11.0/deployment/manifests/nfd.yaml
-
-# 3. 验证 NFD
-kubectl get pods -n node-feature-discovery
-```
-
-### 安装 GPU Operator（两种方式）
-
-#### 方式一：Helm 安装（推荐）
-
-```bash
-# 1. 添加 NVIDIA Helm 仓库
+# Add NVIDIA Helm repository
 helm repo add nvidia https://nvidia.github.io/gpu-operator
 helm repo update
 
-# 2. 创建 namespace
-kubectl create namespace gpu-operator
+# Create namespace
+kubectl create namespace gpu-operator-ns
 
-# 3. 安装 GPU Operator
+# Install GPU Operator
 helm install gpu-operator nvidia/gpu-operator \
-  --namespace gpu-operator \
+  --namespace gpu-operator-ns \
   --version 24.3.0 \
-  --set driver.enabled=true \     # 如果节点没有驱动，设为 true
+  --set driver.enabled=true \
   --set toolkit.enabled=true \
   --set devicePlugin.enabled=true \
   --set dcgmExporter.enabled=true
 
-# 4. 监控安装进度
-kubectl get pods -n gpu-operator -w
+# Monitor installation progress
+kubectl get pods -n gpu-operator-ns -w
 
-# 等待所有 Pod 运行正常
-# NAME                                     READY   STATUS      RESTARTS   AGE
-# gpu-operator-6f8d5b7b9c-xkq5w            1/1     Running     0          2m
-# nvidia-container-toolkit-daemonset-xxxxx     1/1     Running     0          1m
-# nvidia-device-plugin-daemonset-xxxxx        1/1     Running     0          1m
-# nvidia-cuda-exporter-xxxxx               1/1     Running     0          1m
-```
-
-#### 方式二：YAML 直接安装
-
-```bash
-# 直接应用所有资源
-kubectl apply -f https://raw.githubusercontent.com/NVIDIA/gpu-operator/v24.3.0/deployments/gpu-operator/manifests/gpu-operator.yaml
-```
-
-### 验证 GPU Operator
-
-```bash
-# 1. 检查 GPU 节点标签
+# Verify installation
 kubectl get nodes -l nvidia.com/gpu.product
-
-# 预期输出:
-# NAME           LABELS                                          Taints
-# gpu-node-1    nvidia.com/gpu.product=A100-SXM4-40GB   <none>
-
-# 2. 检查 GPU 资源
-kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable.nvidia\.com/gpu}{"\n"}'
-
-# 预期输出:
-# gpu-node-1    2
-
-# 3. 检查 Device Plugin
-kubectl get ds nvidia-device-plugin-daemonset -n gpu-operator
-
-# 4. 验证 NVIDIA 设备插件可以列出 GPU
-kubectl get nodes -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}'
 ```
 
-### 常见问题解决
+### 3. Prepare Storage Backend
 
 ```bash
-# 问题 1: Pod 一直处于 Pending
-kubectl describe pod <pod-name> -n gpu-operator
-
-# 检查是否有节点选择器/污点
-kubectl get nodes
-kubectl describe node <gpu-node> | grep -A5 Taints
-
-# 如果有污点，需要容忍
-kubectl taint nodes <gpu-node> nvidia.com/gpu=:NoSchedule-
-
-# 问题 2: GPU 驱动版本不兼容
-# 检查节点驱动版本
-kubectl exec -n gpu-operator nvidia-driver-daemonset-<xxx> -- nvidia-smi | head -5
-
-# 问题 3: 设备插件不工作
-# 重启设备插件
-kubectl rollout restart ds nvidia-device-plugin-daemonset -n gpu-operator
+# Option 1: MinIO (recommended for testing)
+docker run -d \
+  --name minio \
+  -p 9000:9000 \
+  -p 9001:9001 \
+  -e MINIO_ROOT_USER=admin \
+  -e MINIO_ROOT_PASSWORD=password123 \
+  quay.io/minio/minio server /data --console-address ":9001"
 ```
 
 ---
 
-## 📦 部署 GPU Platform
+## 📦 Database Initialization
 
-### 1. 创建配置文件
+### 1. Install PostgreSQL
 
-创建 `gpu-platform-values.yaml`:
+```bash
+# Docker method (quick start)
+docker run -d \
+  --name postgres \
+  -e POSTGRES_USER=gpu_admin \
+  -e POSTGRES_PASSWORD=your_password \
+  -e POSTGRES_DB=gpu_platform \
+  -p 5432:5432 \
+  postgres:15
+```
+
+### 2. Run Database Migrations
+
+```bash
+# Navigate to project root
+cd /path/to/gpu-platform
+
+# Build migration tool
+go build -o bin/migrate ./scripts/migrate.go
+
+# Run migrations
+./bin/migrate -config=config.yaml -action=up
+./bin/migrate -config=config.yaml -action=seed
+```
+
+---
+
+## ⚙️ Configuration
+
+### Configuration File Structure
 
 ```yaml
-# gpu-platform-values.yaml
+# config.yaml
 
-# 数据库连接
+# Application Configuration
+app:
+  host: "0.0.0.0"
+  port: 8080
+  name: "GPU Platform"
+  domain: "gpu-platform.local"
+
+# Database Configuration
 database:
-  host: "your-postgres-host"
+  host: "localhost"
   port: 5432
   username: "gpu_admin"
-  password: "your-secure-password"
+  password: "your_password"
   name: "gpu_platform"
+  sslmode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 300
 
-# Redis 连接
+# Redis Configuration
 redis:
-  host: "your-redis-host"
+  host: "localhost"
   port: 6379
+  password: ""
+  db: 0
 
-# MinIO 配置
+# Storage Configuration (MinIO/S3)
 storage:
-  endpoint: "your-minio-host:9000"
-  accessKey: "minioadmin"
-  secretKey: "your-minio-password"
+  endpoint: "localhost:9000"
+  access_key: "minioadmin"
+  secret_key: "miniopassword"
+  use_ssl: false
+  bucket_prefix: "gpu-platform"
 
-# Kubernetes 配置
+# Kubernetes Configuration
 kubernetes:
-  kubeconfig: ""  # 留空使用 in-cluster 配置
+  kubeconfig: ""
   namespace: "gpu-platform"
-  gpuPoolLabel: "gpu-pool"
-  instanceLabel: "gpu-instance"
+  gpu_pool_label: "gpu-pool"
+  instance_label: "gpu-instance"
 
-# GPU 默认配置
+# JWT Configuration
+jwt:
+  secret: "your-secret-key-change-in-production"
+  access_token_expire: 3600
+  refresh_token_expire: 604800
+
+# GPU Default Configuration
 gpu:
-  defaultGPUModel: "a100"
-  maxGPUPerInstance: 8
-  defaultCPUCores: 4
-  maxCPUCores: 64
-  defaultMemoryMB: 16384
-  maxMemoryMB: 262144
+  default_gpu_model: "a100"
+  max_gpu_per_instance: 8
+  default_cpu_cores: 4
+  max_cpu_cores: 64
+  default_memory_mb: 16384
+  max_memory_mb: 262144
+  default_storage_gb: 100
+  max_storage_gb: 2000
 
-# 容器默认配置
+# Container Default Configuration
 container:
-  defaultImage: "nvidia/cuda:12.1-runtime-ubuntu22.04"
-  maxInstancesPerUser: 10
-  maxRunningHours: 24
-  workspaceSizeGB: 100
-  dataSizeGB: 200
+  default_image: "nvidia/cuda:12.1-runtime-ubuntu22.04"
+  max_instances_per_user: 10
+  max_running_hours: 24
+  workspace_size_gb: 50
+  data_size_gb: 200
 
-# 监控配置
+# Monitoring Configuration
 monitoring:
   enabled: true
-  metricsPort: 9090
-  alertThresholdGPUTemp: 85
+  metrics_port: 9090
+  alert_threshold_gpu_temp: 85
+  alert_threshold_gpu_memory: 90
 
-# 镜像仓库（可选）
-registry:
-  address: "your-registry.example.com"
-  username: "registry-user"
-  password: "registry-password"
-```
-
-### 2. 安装 GPU Platform
-
-```bash
-# 方式一：Helm 安装（推荐）
-helm install gpu-platform ./deployments/helm/gpu-platform \
-  --namespace gpu-platform \
-  --create-namespace \
-  --values gpu-platform-values.yaml
-
-# 方式二：Kustomize 安装
-kubectl apply -k deployments/k8s/overlays/production
-```
-
-### 3. 验证部署
-
-```bash
-# 1. 检查 Pod 状态
-kubectl get pods -n gpu-platform
-
-# 2. 检查服务
-kubectl get svc -n gpu-platform
-
-# 3. 查看日志
-kubectl logs -n gpu-platform -l app=gpu-platform-api --tail=100
-
-# 4. 检查 API 健康
-kubectl port-forward -n gpu-platform svc/gpu-platform 8080:8080 &
-curl http://localhost:8080/health
-```
-
-### 4. 访问 Web 界面
-
-```bash
-# 方法一：Port Forward（临时访问）
-kubectl port-forward -n gpu-platform svc/gpu-platform 3000:80 &
-
-# 打开浏览器访问 http://localhost:3000
-
-# 方法二：Ingress（生产访问）
-kubectl apply -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: gpu-platform-ingress
-  namespace: gpu-platform
-spec:
-  rules:
-  - host: gpu-platform.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: gpu-platform
-            port:
-              number: 80
-EOF
+# Notification Configuration
+notification:
+  enabled: true
+  email:
+    smtp_host: "smtp.example.com"
+    smtp_port: 587
+    smtp_user: "noreply@example.com"
+    smtp_password: "your-smtp-password"
+    from_address: "noreply@example.com"
+  webhook:
+    enabled: false
+    url: "https://your-webhook.com/notify"
 ```
 
 ---
 
-## 💻 本地开发
+## ▶️ Starting Services
 
-### 1. 环境准备
+### Option 1: Direct Run (Development)
 
 ```bash
-# 安装 Go
+# Copy configuration template
+cp config.yaml.example config.yaml
+
+# Edit configuration
+vim config.yaml
+
+# Build and start API service
+cd cmd/api-server
+go run main.go
+
+# Start frontend in new terminal
+cd frontend
+npm install
+npm run dev
+```
+
+### Option 2: Docker Compose (Quick Testing)
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop all services
+docker-compose down
+```
+
+### Verification
+
+```bash
+# API health check
+curl http://localhost:8080/health
+
+# Expected output:
+# {"status":"healthy"}
+
+# Access web interface
+# Open browser to http://localhost:5173
+```
+
+---
+
+## 💻 Development Environment
+
+### 1. Environment Setup
+
+```bash
+# Install Go
 wget https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
 sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 
-# 安装 Node.js
+# Install Node.js
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
-# 安装 kubectl
+# Install kubectl
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 chmod +x kubectl
 sudo mv kubectl /usr/local/bin/
 
-# 配置 kubectl 连接到集群
-# 使用 kubeconfig
+# Configure kubectl
 export KUBECONFIG=/path/to/your/kubeconfig
-
-# 或合并到默认配置
-cat /path/to/your/kubeconfig >> ~/.kube/config
 ```
 
-### 2. 启动依赖服务
+### 2. Start Dependent Services
 
 ```bash
 # PostgreSQL
 docker run -d \
-  --name postgres \
+  --name postgres-dev \
   -e POSTGRES_USER=gpu_admin \
   -e POSTGRES_PASSWORD=password \
   -e POSTGRES_DB=gpu_platform \
@@ -493,14 +328,14 @@ docker run -d \
 
 # Redis
 docker run -d \
-  --name redis \
+  --name redis-dev \
   -p 6379:6379 \
   redis:7-alpine \
   redis-server --requirepass password
 
 # MinIO
 docker run -d \
-  --name minio \
+  --name minio-dev \
   -p 9000:9000 \
   -p 9001:9001 \
   -e MINIO_ROOT_USER=minioadmin \
@@ -508,145 +343,107 @@ docker run -d \
   quay.io/minio/minio server /data --console-address ":9001"
 ```
 
-### 3. 配置和运行
+---
+
+## 🏭 Production Deployment
+
+### 1. Prepare Production Environment
 
 ```bash
-# 复制配置模板
-cp config.yaml.example config.yaml
+# Create production namespace
+kubectl create namespace gpu-platform-prod
 
-# 编辑配置
-vim config.yaml
+# Create secrets
+kubectl create secret generic gpu-platform-secrets \
+  --from-literal=database-password="your-secure-password" \
+  --from-literal=jwt-secret="your-super-secure-jwt-secret" \
+  --from-literal=redis-password="your-redis-password" \
+  --from-literal=minio-access-key="your-access-key" \
+  --from-literal=minio-secret-key="your-secret-key" \
+  -n gpu-platform-prod
+```
 
-# 运行后端
-cd cmd/api-server
-go run main.go
+### 2. Deploy to Kubernetes
 
-# 新终端运行前端
-cd frontend
-npm install
-npm run dev
+```bash
+# Using Helm
+helm install gpu-platform ./deployments/helm/gpu-platform \
+  --namespace gpu-platform-prod \
+  --create-namespace \
+  --values gpu-platform-values.yaml
+
+# Verify deployment
+kubectl get pods -n gpu-platform-prod
+kubectl logs -n gpu-platform-prod -l app=gpu-platform --tail=100
+```
+
+### 3. Configure HTTPS
+
+```bash
+# Install cert-manager
+helm install cert-manager jetstack/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --version v1.14.0
+
+# Apply production ingress configuration with TLS
+# See deployment documentation for details
 ```
 
 ---
 
-## 🏭 生产环境配置
+## ❓ FAQ
 
-### TLS/HTTPS 配置
-
-```yaml
-# values.yaml
-ingress:
-  enabled: true
-  className: nginx
-  annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-  hosts:
-    - host: gpu-platform.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
-    - secretName: gpu-platform-tls
-      hosts:
-        - gpu-platform.example.com
-```
-
-### 高可用配置
-
-```yaml
-# values.yaml
-replicaCount: 3
-
-autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 10
-
-resources:
-  limits:
-    cpu: "1000m"
-    memory: "1Gi"
-  requests:
-    cpu: "500m"
-    memory: "512Mi"
-```
-
-### 资源限制配置
-
-```yaml
-# values.yaml
-resources:
-  limits:
-    nvidia.com/gpu: 1
-    cpu: "2000m"
-    memory: "2Gi"
-  requests:
-    nvidia.com/gpu: 1
-    cpu: "1000m"
-    memory: "1Gi"
-```
-
----
-
-## ❓ 常见问题
-
-### Q1: 找不到 GPU 节点？
+### Q1: GPU nodes not found?
 
 ```bash
-# 检查节点标签
-kubectl get nodes --show-labels
+# Check node labels
+kubectl get nodes --show-labels | grep nvidia
 
-# 如果没有 nvidia 标签，重新安装 NFD
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/node-feature-discovery/v0.14.0/deployment/manifests/nfd.yaml
+# Manually add label if missing
+kubectl label nodes <gpu-node-name> nvidia.com/gpu.product=A100-SXM4-40GB --overwrite
 
-# 手动标签节点
-kubectl label nodes <gpu-node> nvidia.com/gpu.product=A100-SXM4-40GB --overwrite
+# Verify GPU resources
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable.nvidia\.com/gpu}{"\n"}'
 ```
 
-### Q2: GPU Operator 安装失败？
+### Q2: GPU Operator installation failed?
 
 ```bash
-# 检查 operator 日志
-kubectl logs -n gpu-operator deployment/gpu-operator
+# Check operator logs
+kubectl logs -n gpu-operator-ns deployment/gpu-operator
 
-# 检查特定组件日志
-kubectl logs -n gpu-operator -l app=nvidia-container-toolkit-daemonset
-
-# 完全卸载后重新安装
-helm uninstall gpu-operator -n gpu-operator
+# Uninstall and reinstall
+helm uninstall gpu-operator -n gpu-operator-ns
 kubectl delete crd $(kubectl get crd | grep nvidia | awk '{print $1}')
-helm install gpu-operator nvidia/gpu-operator -n gpu-operator
+helm install gpu-operator nvidia/gpu-operator -n gpu-operator-ns
 ```
 
-### Q3: GPU 内存不可见？
+### Q3: GPU memory not visible?
 
 ```bash
-# 检查设备插件状态
-kubectl get ds nvidia-device-plugin-daemonset -n gpu-operator -o yaml
+# Check device plugin status
+kubectl get ds nvidia-device-plugin-daemonset -n gpu-operator-ns
 
-# 重启设备插件
-kubectl rollout restart ds nvidia-device-plugin-daemonset -n gpu-operator
-
-# 检查节点资源
-kubectl describe node <gpu-node> | grep -A10 "Allocated resources"
+# Restart device plugin
+kubectl rollout restart ds nvidia-device-plugin-daemonset -n gpu-operator-ns
 ```
 
 ---
 
-## 📚 参考链接
+## 📚 Reference Documentation
 
-- [Kubernetes 官方文档](https://kubernetes.io/docs/home/)
-- [NVIDIA GPU Operator 文档](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/)
-- [kubectl 安装配置](https://kubernetes.io/docs/reference/kubectl/)
-- [Helm 官方文档](https://helm.sh/docs/)
-- [阿里云 ACK 文档](https://help.aliyun.com/document_detail/86589.html)
-- [AWS EKS 文档](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html)
-- [GCP GKE 文档](https://cloud.google.com/kubernetes-engine/docs)
+| Documentation | Link |
+|---------------|------|
+| Kubernetes | https://kubernetes.io/docs/home/ |
+| NVIDIA GPU Operator | https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/ |
+| Go Documentation | https://go.dev/doc/ |
+| React Documentation | https://react.dev/ |
+| Gin Framework | https://gin-gonic.com/docs/ |
 
 ---
 
-## 📄 许可证
+## 📄 License
 
 MIT License
 
