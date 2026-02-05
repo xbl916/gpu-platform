@@ -55,11 +55,11 @@ const Resources: React.FC = () => {
       setLoading(true)
       const [serverData, poolData, availData] = await Promise.all([
         resourceService.listGPUServers().catch(() => []),
-        resourceService.listGPU Pools().catch(() => []),
+        resourceService.listGPUPools().catch(() => []),
         resourceService.getAvailability().catch(() => null),
       ])
-      setServers(serverData || [])
-      setPools(poolData || [])
+      setServers((serverData as any)?.data || serverData || [])
+      setPools((poolData as any)?.data || poolData || [])
       setAvailability(availData)
     } catch (error) {
       console.error('Failed to load resources:', error)

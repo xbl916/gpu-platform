@@ -146,7 +146,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {quota && (
-        <Card title={<><UserOutlined /> 我的资源配额" style={{ marginBottom: 16 }}>
+        <Card title={<><UserOutlined /> 我的资源配额</>} style={{ marginBottom: 16 }}>
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12} lg={6}>
               <div>

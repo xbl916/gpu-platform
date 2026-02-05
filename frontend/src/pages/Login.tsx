@@ -28,7 +28,7 @@ const Login: React.FC = () => {
   return (
     <div className="login-container">
       <div className="login-card">
-        <Title level={2} className="login-title}>
+        <Title level={2} className="login-title">
           GPU Platform
         </Title>
         <Title level={4} className="login-title" style={{ color: '#666', fontWeight: 'normal' }}>

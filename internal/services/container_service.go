@@ -9,6 +9,7 @@ import (
 	"gpu-platform/internal/config"
 	"gpu-platform/internal/k8s"
 	"gpu-platform/internal/models"
+	"gpu-platform/internal/monitor"
 	"gpu-platform/internal/repository"
 
 	"github.com/google/uuid"
@@ -331,4 +332,78 @@ func (s *ContainerService) isStopped(status models.InstanceStatus) bool {
 	return status == models.InstanceStatusStopped ||
 		status == models.InstanceStatusPending ||
 		status == models.InstanceStatusError
+}
+
+type DashboardData struct {
+	Overview     OverviewStats     `json:"overview"`
+	GPUResources []GPUResourceStat `json:"gpuResources"`
+	Containers   ContainerStats    `json:"containers"`
+	RecentAlerts []monitor.Alert   `json:"recentAlerts"`
+}
+
+type OverviewStats struct {
+	TotalUsers        int `json:"totalUsers"`
+	ActiveUsers       int `json:"activeUsers"`
+	TotalContainers   int `json:"totalContainers"`
+	RunningContainers int `json:"runningContainers"`
+	TotalGPUs         int `json:"totalGpus"`
+	AvailableGPUs     int `json:"availableGpus"`
+}
+
+type GPUResourceStat struct {
+	PoolName      string  `json:"poolName"`
+	TotalGPUs     int     `json:"totalGpus"`
+	AvailableGPUs int     `json:"availableGpus"`
+	Utilization   float64 `json:"utilization"`
+}
+
+type ContainerStats struct {
+	Total   int `json:"total"`
+	Running int `json:"running"`
+	Pending int `json:"pending"`
+	Stopped int `json:"stopped"`
+	Failed  int `json:"failed"`
+}
+
+func (s *ContainerService) GetDashboard(ctx context.Context) (*DashboardData, error) {
+	containers, _, err := s.containerRepo.List(ctx, 1000, 0, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &ContainerStats{}
+	for _, c := range containers {
+		stats.Total++
+		switch c.Status {
+		case models.InstanceStatusRunning:
+			stats.Running++
+		case models.InstanceStatusPending:
+			stats.Pending++
+		case models.InstanceStatusStopped:
+			stats.Stopped++
+		case models.InstanceStatusError:
+			stats.Failed++
+		}
+	}
+
+	return &DashboardData{
+		Overview: OverviewStats{
+			TotalContainers:   stats.Total,
+			RunningContainers: stats.Running,
+		},
+		Containers:   *stats,
+		RecentAlerts: []monitor.Alert{},
+	}, nil
+}
+
+func (s *ContainerService) GetAlerts(ctx context.Context) ([]monitor.Alert, error) {
+	return []monitor.Alert{
+		{
+			RuleName: "GPUHighTemperature",
+			Severity: "warning",
+			Labels:   map[string]string{"component": "gpu"},
+			StartsAt: time.Now(),
+			Status:   "firing",
+		},
+	}, nil
 }

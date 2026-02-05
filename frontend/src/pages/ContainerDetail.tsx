@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { Card, Descriptions, Button, Space, Tag, Tabs, Progress, Row, Col, Statistic } from 'antd'
-import { ArrowLeftOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined, CloudServerOutlined, TerminalOutlined, FolderOutlined, UploadOutlined, DashboardOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, PlayCircleOutlined, PauseCircleOutlined, ReloadOutlined, CloudServerOutlined, ConsoleSqlOutlined, FolderOutlined, UploadOutlined, DashboardOutlined } from '@ant-design/icons'
 import { useParams, useNavigate } from 'react-router-dom'
 import { AreaChart, Area, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { containerService } from '../../services/api'
+import { containerService } from '../services/api'
 
 interface ContainerMetrics {
   cpuUsage: number
@@ -172,7 +172,7 @@ const ContainerDetail: React.FC = () => {
       key: 'terminal',
       label: '终端',
       children: (
-        <Card title={<Space><TerminalOutlined /> SSH 终端</Space>}>
+        <Card title={<Space><ConsoleSqlOutlined /> SSH 终端</Space>}>
           <div style={{ background: '#1e1e1e', padding: '16px', borderRadius: '8px', minHeight: '400px' }}>
             <p style={{ color: '#52c41a' }}>root@gpu-container:~#</p>
             <p style={{ color: '#fff' }}>模拟 SSH 终端 - 请使用实际 SSH 客户端连接</p>

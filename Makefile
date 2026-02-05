@@ -1,4 +1,4 @@
-.PHONY: all build run test clean lint docker-build docker-push deploy help
+.PHONY: all build build-frontend run run-dev test clean lint docker-build docker-push deploy help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -14,16 +14,18 @@ all: help
 help:
 	@echo "GPU Platform - Available Commands:"
 	@echo ""
-	@echo "  make build          - Build the API server binary"
-	@echo "  make run            - Build and run the API server"
-	@echo "  make test           - Run unit tests"
-	@echo "  make test-coverage  - Run tests with coverage"
-	@echo "  make clean          - Clean build artifacts"
-	@echo "  make lint           - Run linter (if installed)"
-	@echo "  make docker-build   - Build Docker image"
-	@echo "  make docker-push   - Push Docker image to registry"
-	@echo "  make deploy        - Deploy to Kubernetes"
-	@echo "  make migrate       - Run database migrations"
+	@echo "  make build            - Build the API server binary"
+	@echo "  make build-frontend  - Build the frontend"
+	@echo "  make run             - Build and run the API server"
+	@echo "  make run-dev         - Run in development mode (frontend + backend)"
+	@echo "  make test            - Run unit tests"
+	@echo "  make test-coverage   - Run tests with coverage"
+	@echo "  make clean           - Clean build artifacts"
+	@echo "  make lint            - Run linter (if installed)"
+	@echo "  make docker-build    - Build Docker image"
+	@echo "  make docker-push     - Push Docker image to registry"
+	@echo "  make deploy          - Deploy to Kubernetes"
+	@echo "  make migrate         - Run database migrations"
 	@echo ""
 
 build:
@@ -31,9 +33,25 @@ build:
 	CGO_ENABLED=$(CGO_ENABLED) go build -ldflags "$(LDFLAGS)" -o bin/api-server ./cmd/api-server
 	@echo "Build completed: bin/api-server"
 
+build-frontend:
+	@echo "Building GPU Platform Frontend..."
+	cd frontend && npm install && npm run build
+	@echo "Frontend build completed: frontend/dist"
+
 run: build
 	@echo "Starting GPU Platform API Server..."
 	./bin/api-server
+
+run-dev:
+	@echo "Starting GPU Platform in development mode..."
+	@echo "Starting backend on port 8080..."
+	cd /workspace && ./bin/api-server &
+	@echo "Starting frontend on port 3000..."
+	cd frontend && npm run dev &
+	@echo ""
+	@echo "Development servers started:"
+	@echo "  - Frontend: http://localhost:3000"
+	@echo "  - Backend:  http://localhost:8080"
 
 test:
 	@echo "Running unit tests..."

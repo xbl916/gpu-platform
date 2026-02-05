@@ -11,7 +11,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons'
-import { useAuthStore } from '../../store/authStore'
+import { useAuthStore } from '../store/authStore'
 
 const { Header, Sider, Content } = Layout
 

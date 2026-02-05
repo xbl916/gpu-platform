@@ -1,30 +1,116 @@
 package middleware
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
-	"gpu-platform/internal/auth"
-	"gpu-platform/internal/config"
 	"gpu-platform/internal/models"
 	"gpu-platform/internal/repository"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
+var (
+	ErrInvalidToken  = errors.New("invalid token")
+	ErrExpiredToken  = errors.New("token has expired")
+	ErrInvalidClaims = errors.New("invalid token claims")
+)
+
 type AuthMiddleware struct {
-	jwtSvc   *auth.JWTService
+	jwtSvc   *JWTService
 	userRepo *repository.UserRepository
-	cfg      *config.Config
 }
 
-func NewAuthMiddleware(jwtSvc *auth.JWTService, userRepo *repository.UserRepository, cfg *config.Config) *AuthMiddleware {
+func NewAuthMiddleware(jwtSvc *JWTService, userRepo *repository.UserRepository) *AuthMiddleware {
 	return &AuthMiddleware{
 		jwtSvc:   jwtSvc,
 		userRepo: userRepo,
-		cfg:      cfg,
 	}
+}
+
+type JWTService struct {
+	secret             string
+	accessTokenExpire  int
+	refreshTokenExpire int
+}
+
+type TokenClaims struct {
+	UserID    string `json:"userId"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	ProjectID string `json:"projectId,omitempty"`
+	jwt.RegisteredClaims
+}
+
+func NewJWTService(secret string, accessExpire, refreshExpire int) *JWTService {
+	return &JWTService{
+		secret:             secret,
+		accessTokenExpire:  accessExpire,
+		refreshTokenExpire: refreshExpire,
+	}
+}
+
+func (s *JWTService) GenerateAccessToken(userID, email, role string, projectID *string) (string, error) {
+	claims := TokenClaims{
+		UserID: userID,
+		Email:  email,
+		Role:   role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(s.accessTokenExpire) * time.Second)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "gpu-platform",
+			Subject:   userID,
+		},
+	}
+
+	if projectID != nil {
+		claims.ProjectID = *projectID
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.secret))
+}
+
+func (s *JWTService) GenerateRefreshToken(userID string) (string, error) {
+	claims := jwt.RegisteredClaims{
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(s.refreshTokenExpire) * time.Second)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		NotBefore: jwt.NewNumericDate(time.Now()),
+		Issuer:    "gpu-platform",
+		Subject:   userID,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.secret))
+}
+
+func (s *JWTService) ValidateToken(tokenString string) (*TokenClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.secret), nil
+	})
+
+	if err != nil {
+		if errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, ErrExpiredToken
+		}
+		return nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(*TokenClaims)
+	if !ok || !token.Valid {
+		return nil, ErrInvalidClaims
+	}
+
+	return claims, nil
 }
 
 func (m *AuthMiddleware) AuthRequired() gin.HandlerFunc {
@@ -138,7 +224,7 @@ func (m *AuthMiddleware) RoleRequired(allowedRoles ...string) gin.HandlerFunc {
 
 func GetUserID(c *gin.Context) string {
 	if userID, exists := c.Get("userID"); exists {
-		return userID.(string)
+		return userID.(uuid.UUID).String()
 	}
 	return ""
 }
@@ -150,38 +236,12 @@ func GetUserRole(c *gin.Context) string {
 	return ""
 }
 
-func ParseUUID(s string) (string, error) {
-	if len(s) != 36 {
-		return "", &ValidationError{Message: "invalid UUID format"}
-	}
-	return s, nil
-}
-
 type ValidationError struct {
 	Message string
 }
 
 func (e *ValidationError) Error() string {
 	return e.Message
-}
-
-type RateLimitMiddleware struct {
-	cfg *config.RateLimitConfig
-}
-
-func NewRateLimitMiddleware(cfg *config.RateLimitConfig) *RateLimitMiddleware {
-	return &RateLimitMiddleware{cfg: cfg}
-}
-
-func (m *RateLimitMiddleware) RateLimit() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if !m.cfg.Enabled {
-			c.Next()
-			return
-		}
-
-		c.Next()
-	}
 }
 
 type CORSMiddleware struct{}
@@ -204,28 +264,4 @@ func (m *CORSMiddleware) CORS() gin.HandlerFunc {
 
 		c.Next()
 	}
-}
-
-type LoggingMiddleware struct{}
-
-func NewLoggingMiddleware() *LoggingMiddleware {
-	return &LoggingMiddleware{}
-}
-
-func (m *LoggingMiddleware) Logger() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Next()
-	}
-}
-
-type RecoveryMiddleware struct {
-	recovery gin.RecoveryFunc
-}
-
-func NewRecoveryMiddleware() *RecoveryMiddleware {
-	return &RecoveryMiddleware{}
-}
-
-func (m *RecoveryMiddleware) Recovery() gin.HandlerFunc {
-	return gin.Recovery()
 }

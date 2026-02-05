@@ -35,7 +35,7 @@ const Templates: React.FC = () => {
     try {
       setLoading(true)
       const data = await templateService.list({ limit: 100 })
-      setTemplates(data || [])
+      setTemplates((data as any)?.data || data || [])
     } catch (error) {
       console.error('Failed to load templates:', error)
     } finally {

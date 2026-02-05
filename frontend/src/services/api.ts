@@ -121,7 +121,7 @@ export const resourceService = {
     return response.data
   },
 
-  async listGPU Pools() {
+  async listGPUPools() {
     const response = await api.get('/resources/gpu-pools')
     return response.data
   },

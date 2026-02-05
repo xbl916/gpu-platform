@@ -54,8 +54,8 @@ const Containers: React.FC = () => {
 
   const loadTemplates = async () => {
     try {
-      constService.list({ limit: 100 })
-      setTemplates data = await template(data || [])
+      const data = await templateService.list({ limit: 100 })
+      setTemplates(data?.data || [])
     } catch (error) {
       console.error('Failed to load templates:', error)
     }
