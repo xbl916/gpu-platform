@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - github.com/xbl916/gpu-platform/deployments/k8s/base
+namespace: gpu-platform
+
+configMapGenerator:
+- files:
+  - DB_HOST=postgres.gpu-platform.svc.cluster.local
+  - DB_PORT=5432
+  - DB_NAME=gpu_platform
+  - DB_USER=gpu_admin
+  - DB_PASSWORD=changeme
+  - REDIS_HOST=redis.gpu-platform.svc.cluster.local
+  - REDIS_PORT=6379
+  - MINIO_ENDPOINT=minio.gpu-platform.svc.cluster.local:9000
+  - JWT_SECRET=changeme-in-production
+  - KUBERNETES_NAMESPACE=gpu-platform
+  name: gpu-platform-config
+generatorOptions:
+  disableNameSuffixHash: true
+
+replicas:
+- name: gpu-platform-api
+  count: 1
