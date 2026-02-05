@@ -1,0 +1,104 @@
+:root {
+  --primary-color: #1890ff;
+  --bg-color: #f0f2f5;
+  --card-bg: #ffffff;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--bg-color);
+  min-height: 100vh;
+}
+
+.logo {
+  height: 32px;
+  margin: 16px;
+  color: white;
+  font-size: 18px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.site-layout {
+  min-height: 100vh;
+}
+
+.content {
+  margin: 24px 16px;
+  padding: 24px;
+  background: var(--card-bg);
+  border-radius: 8px;
+  min-height: calc(100vh - 112px);
+}
+
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-card {
+  width: 400px;
+  padding: 40px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+.login-title {
+  text-align: center;
+  margin-bottom: 32px;
+  color: #333;
+}
+
+.stat-card {
+  text-align: center;
+  padding: 24px;
+}
+
+.stat-value {
+  font-size: 36px;
+  font-weight: bold;
+  color: var(--primary-color);
+}
+
+.stat-label {
+  color: #666;
+  margin-top: 8px;
+}
+
+.container-card {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.container-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.status-running {
+  color: #52c41a;
+}
+
+.status-stopped {
+  color: #ff4d4f;
+}
+
+.status-pending {
+  color: #faad14;
+}
+
+.gpu-chart {
+  height: 300px;
+}

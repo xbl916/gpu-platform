@@ -1,0 +1,116 @@
+# GPU Container Platform Configuration
+
+# Application Configuration
+app:
+  name: "gpu-platform"
+  host: "0.0.0.0"
+  port: 8080
+  env: "development"
+  debug: true
+  log_level: "debug"
+
+# JWT Configuration
+jwt:
+  secret: "${JWT_SECRET_KEY}"
+  access_token_expire: 28800  # 8 hours in seconds
+  refresh_token_expire: 604800  # 7 days in seconds
+
+# Database Configuration (PostgreSQL)
+database:
+  host: "${DB_HOST}"
+  port: 5432
+  username: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  name: "${DB_NAME}"
+  sslmode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 300  # seconds
+
+# Redis Configuration
+redis:
+  host: "${REDIS_HOST}"
+  port: 6379
+  password: "${REDIS_PASSWORD}"
+  db: 0
+  pool_size: 10
+  min_idle_conns: 5
+
+# Kubernetes Configuration
+kubernetes:
+  kubeconfig: "${KUBECONFIG}"
+  namespace: "gpu-platform"
+  gpu_pool_label: "gpu-pool"
+  instance_label: "gpu-instance"
+
+# GPU Resource Configuration
+gpu:
+  default_gpu_model: "a100"
+  default_gpu_count: 1
+  max_gpu_per_instance: 8
+  default_cpu_cores: 4
+  max_cpu_cores: 64
+  default_memory_mb: 16384
+  max_memory_mb: 262144
+  default_storage_gb: 100
+  max_storage_gb: 2000
+
+# Container Configuration
+container:
+  default_image: "nvidia/cuda:12.1-runtime-ubuntu22.04"
+  default_command: "/bin/bash"
+  workspace_size_gb: 100
+  data_size_gb: 200
+  max_instances_per_user: 10
+  max_running_hours: 24
+
+# Storage Configuration (MinIO)
+storage:
+  endpoint: "${MINIO_ENDPOINT}"
+  access_key: "${MINIO_ACCESS_KEY}"
+  secret_key: "${MINIO_SECRET_KEY}"
+  use_ssl: false
+  bucket_prefix: "gpu-platform"
+  region: "us-east-1"
+
+# Monitoring Configuration
+monitoring:
+  enabled: true
+  metrics_port: 9090
+  scrape_interval: 30  # seconds
+  alert_threshold_gpu_temp: 85
+  alert_threshold_gpu_memory: 90
+  alert_threshold_cpu_usage: 80
+
+# Notification Configuration
+notification:
+  enabled: true
+  email:
+    smtp_host: "${SMTP_HOST}"
+    smtp_port: 587
+    smtp_user: "${SMTP_USER}"
+    smtp_password: "${SMTP_PASSWORD}"
+    from_address: "noreply@gpu-platform.local"
+  webhook:
+    enabled: false
+    url: "${WEBHOOK_URL}"
+
+# Registry Configuration
+registry:
+  address: "${REGISTRY_ADDRESS}"
+  username: "${REGISTRY_USER}"
+  password: "${REGISTRY_PASSWORD}"
+  insecure: false
+
+# Rate Limiting Configuration
+rate_limit:
+  enabled: true
+  requests_per_minute: 100
+  burst_size: 20
+
+# Session Configuration
+session:
+  cookie_name: "gpu_session"
+  cookie_secure: false
+  cookie_http_only: true
+  max_session_age: 86400  # 24 hours in seconds
