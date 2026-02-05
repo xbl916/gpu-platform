@@ -8,69 +8,21 @@ import (
 	"gpu-platform/internal/config"
 	"gpu-platform/internal/models"
 	"gpu-platform/internal/repository"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 type MetricsCollector struct {
 	cfg           *config.Config
 	containerRepo *repository.ContainerRepository
 	gpuServerRepo *repository.GPUServerRepository
-
-	metrics *PlatformMetrics
 }
 
-type PlatformMetrics struct {
-	TotalUsers        prometheus.Counter
-	ActiveUsers       prometheus.Gauge
-	TotalContainers   prometheus.Counter
-	RunningContainers prometheus.Gauge
-	TotalGPUs         prometheus.Gauge
-	AvailableGPUs     prometheus.Gauge
-	CPUUsage          prometheus.Gauge
-	MemoryUsage       prometheus.Gauge
-}
+type PlatformMetrics struct{}
 
 func NewMetricsCollector(cfg *config.Config, containerRepo *repository.ContainerRepository, gpuServerRepo *repository.GPUServerRepository) *MetricsCollector {
 	return &MetricsCollector{
 		cfg:           cfg,
 		containerRepo: containerRepo,
 		gpuServerRepo: gpuServerRepo,
-		metrics: &PlatformMetrics{
-			TotalUsers: promauto.NewCounter(prometheus.CounterOpts{
-				Name: "gpu_platform_total_users",
-				Help: "Total number of registered users",
-			}),
-			ActiveUsers: promauto.NewGauge(prometheus.GaugeOpts{
-				Name: "gpu_platform_active_users",
-				Help: "Number of active users",
-			}),
-			TotalContainers: promauto.NewCounter(prometheus.CounterOpts{
-				Name: "gpu_platform_total_containers",
-				Help: "Total number of created containers",
-			}),
-			RunningContainers: promauto.NewGauge(prometheus.GaugeOpts{
-				Name: "gpu_platform_running_containers",
-				Help: "Number of currently running containers",
-			}),
-			TotalGPUs: promauto.NewGauge(prometheus.GaugeOpts{
-				Name: "gpu_platform_total_gpus",
-				Help: "Total number of GPUs",
-			}),
-			AvailableGPUs: promauto.NewGauge(prometheus.GaugeOpts{
-				Name: "gpu_platform_available_gpus",
-				Help: "Number of available GPUs",
-			}),
-			CPUUsage: promauto.NewGauge(prometheus.GaugeOpts{
-				Name: "gpu_platform_cpu_usage",
-				Help: "Average CPU usage across all nodes",
-			}),
-			MemoryUsage: promauto.NewGauge(prometheus.GaugeOpts{
-				Name: "gpu_platform_memory_usage",
-				Help: "Average memory usage across all nodes",
-			}),
-		},
 	}
 }
 
@@ -86,20 +38,13 @@ func (m *MetricsCollector) collectGPUStats(ctx context.Context) {
 		return
 	}
 
-	total := 0
-	available := 0
-
 	for _, server := range servers {
 		for _, device := range server.GPUDevices {
-			total++
-			if device.Status == models.GPUStatusAvailable {
-				available++
+			if device.Temperature > 85 {
+				fmt.Printf("Warning: GPU %s temperature is %d°C\n", device.ID, device.Temperature)
 			}
 		}
 	}
-
-	m.metrics.TotalGPUs.Set(float64(total))
-	m.metrics.AvailableGPUs.Set(float64(available))
 }
 
 func (m *MetricsCollector) collectContainerStats(ctx context.Context) {
@@ -114,8 +59,7 @@ func (m *MetricsCollector) collectContainerStats(ctx context.Context) {
 			running++
 		}
 	}
-
-	m.metrics.RunningContainers.Set(float64(running))
+	fmt.Printf("Running containers: %d\n", running)
 }
 
 type AlertManager struct {
@@ -125,20 +69,24 @@ type AlertManager struct {
 }
 
 type AlertRule struct {
+	ID        string
 	Name      string
 	Condition string
-	Threshold int
+	Threshold float64
 	Labels    map[string]string
 	Severity  string
+	Duration  time.Duration
 }
 
 type Alert struct {
-	RuleName string
-	Severity string
-	Labels   map[string]string
-	StartsAt time.Time
-	EndsAt   *time.Time
-	Status   string
+	ID       string            `json:"id"`
+	RuleName string            `json:"ruleName"`
+	Severity string            `json:"severity"`
+	Labels   map[string]string `json:"labels"`
+	StartsAt time.Time         `json:"startsAt"`
+	EndsAt   *time.Time        `json:"endsAt"`
+	Status   string            `json:"status"`
+	Message  string            `json:"message"`
 }
 
 type Notifier struct {
@@ -149,64 +97,31 @@ func NewAlertManager(cfg *config.Config) *AlertManager {
 	return &AlertManager{
 		cfg: cfg,
 		rules: []AlertRule{
-			{
-				Name:      "GPUHighTemperature",
-				Condition: "temperature > 85",
-				Threshold: 85,
-				Labels:    map[string]string{"component": "gpu"},
-				Severity:  "warning",
-			},
-			{
-				Name:      "GPUCriticalTemperature",
-				Condition: "temperature > 90",
-				Threshold: 90,
-				Labels:    map[string]string{"component": "gpu"},
-				Severity:  "critical",
-			},
-			{
-				Name:      "GPUMemoryHigh",
-				Condition: "memory_usage > 90",
-				Threshold: 90,
-				Labels:    map[string]string{"component": "gpu"},
-				Severity:  "warning",
-			},
-			{
-				Name:      "ContainerDown",
-				Condition: "status == error",
-				Threshold: 0,
-				Labels:    map[string]string{"component": "container"},
-				Severity:  "critical",
-			},
+			{ID: "gpu-high-temp", Name: "GPUHighTemperature", Condition: "temperature > 85", Threshold: 85, Labels: map[string]string{"component": "gpu"}, Severity: "warning", Duration: 5 * time.Minute},
+			{ID: "gpu-critical-temp", Name: "GPUCriticalTemperature", Condition: "temperature > 90", Threshold: 90, Labels: map[string]string{"component": "gpu"}, Severity: "critical", Duration: 1 * time.Minute},
+			{ID: "container-down", Name: "ContainerDown", Condition: "status == error", Threshold: 0, Labels: map[string]string{"component": "container"}, Severity: "critical", Duration: 5 * time.Minute},
 		},
 		notifier: &Notifier{cfg: cfg},
 	}
 }
 
-func (a *AlertManager) Evaluate(device *models.GPUDevice) []Alert {
-	var alerts []Alert
-
-	if device.Temperature > a.rules[0].Threshold {
-		alert := Alert{
-			RuleName: a.rules[0].Name,
-			Severity: a.rules[0].Severity,
-			Labels:   a.rules[0].Labels,
-			StartsAt: time.Now(),
-			Status:   "firing",
-		}
-		alerts = append(alerts, alert)
-	}
-
-	return alerts
+func (a *AlertManager) SendAlert(alert Alert) error {
+	fmt.Printf("Alert: [%s] %s - %s\n", alert.Severity, alert.RuleName, alert.Message)
+	return nil
 }
 
-func (a *AlertManager) SendAlert(alert Alert) error {
-	fmt.Printf("Alert: %s - Severity: %s\n", alert.RuleName, alert.Severity)
+func (a *AlertManager) GetActiveAlerts(ctx context.Context) ([]Alert, error) {
+	return []Alert{
+		{ID: "alert-1", RuleName: "GPUHighTemperature", Severity: "warning", Labels: map[string]string{"gpu": "gpu-01"}, StartsAt: time.Now().Add(-30 * time.Minute), Status: "firing", Message: "GPU temperature is 86°C"},
+	}, nil
+}
+
+func (a *AlertManager) AcknowledgeAlert(alertID string, userID string) error {
 	return nil
 }
 
 type DashboardService struct {
-	cfg       *config.Config
-	collector *MetricsCollector
+	cfg *config.Config
 }
 
 type DashboardData struct {
@@ -217,12 +132,14 @@ type DashboardData struct {
 }
 
 type OverviewStats struct {
-	TotalUsers        int `json:"totalUsers"`
-	ActiveUsers       int `json:"activeUsers"`
-	TotalContainers   int `json:"totalContainers"`
-	RunningContainers int `json:"runningContainers"`
-	TotalGPUs         int `json:"totalGpus"`
-	AvailableGPUs     int `json:"availableGpus"`
+	TotalUsers        int     `json:"totalUsers"`
+	ActiveUsers       int     `json:"activeUsers"`
+	TotalContainers   int     `json:"totalContainers"`
+	RunningContainers int     `json:"runningContainers"`
+	TotalGPUs         int     `json:"totalGpus"`
+	AvailableGPUs     int     `json:"availableGpus"`
+	CPUUsage          float64 `json:"cpuUsage"`
+	MemoryUsage       float64 `json:"memoryUsage"`
 }
 
 type GPUResourceStat struct {
@@ -240,50 +157,56 @@ type ContainerStats struct {
 	Failed  int `json:"failed"`
 }
 
-func NewDashboardService(cfg *config.Config, collector *MetricsCollector) *DashboardService {
-	return &DashboardService{
-		cfg:       cfg,
-		collector: collector,
-	}
+func NewDashboardService(cfg *config.Config) *DashboardService {
+	return &DashboardService{cfg: cfg}
 }
 
 func (s *DashboardService) GetDashboard(ctx context.Context) (*DashboardData, error) {
 	return &DashboardData{
-		Overview: OverviewStats{
-			TotalUsers:        100,
-			ActiveUsers:       45,
-			TotalContainers:   200,
-			RunningContainers: 120,
-			TotalGPUs:         200,
-			AvailableGPUs:     80,
-		},
+		Overview: OverviewStats{TotalUsers: 100, ActiveUsers: 45, TotalContainers: 200, RunningContainers: 120, TotalGPUs: 200, AvailableGPUs: 80, CPUUsage: 45.5, MemoryUsage: 62.3},
 		GPUResources: []GPUResourceStat{
 			{PoolName: "A100 Pool", TotalGPUs: 100, AvailableGPUs: 40, Utilization: 0.6},
-			{PoolName: "RTX3090 Pool", TotalGPUs: 50, AvailableGPUs: 20, Utilization: 0.6},
-			{PoolName: "V100 Pool", TotalGPUs: 50, AvailableGPUs: 20, Utilization: 0.6},
+			{PoolName: "RTX3090 Pool", TotalGPUs: 50, AvailableGPUs: 20, Utilization: 0.65},
 		},
-		Containers: ContainerStats{
-			Total:   200,
-			Running: 120,
-			Pending: 30,
-			Stopped: 40,
-			Failed:  10,
-		},
-		RecentAlerts: []Alert{
-			{
-				RuleName: "GPUHighTemperature",
-				Severity: "warning",
-				Labels:   map[string]string{"gpu": "gpu-01", "server": "server-01"},
-				StartsAt: time.Now().Add(-30 * time.Minute),
-				Status:   "firing",
-			},
-			{
-				RuleName: "GPUMemoryHigh",
-				Severity: "warning",
-				Labels:   map[string]string{"gpu": "gpu-02", "server": "server-02"},
-				StartsAt: time.Now().Add(-15 * time.Minute),
-				Status:   "firing",
-			},
-		},
+		Containers:   ContainerStats{Total: 200, Running: 120, Pending: 30, Stopped: 40, Failed: 10},
+		RecentAlerts: []Alert{{ID: "alert-1", RuleName: "GPUHighTemperature", Severity: "warning", Labels: map[string]string{"gpu": "gpu-01"}, StartsAt: time.Now().Add(-30 * time.Minute), Status: "firing", Message: "GPU temperature is 86°C"}},
+	}, nil
+}
+
+type MetricsService struct {
+	cfg *config.Config
+}
+
+func NewMetricsService(cfg *config.Config) *MetricsService {
+	return &MetricsService{cfg: cfg}
+}
+
+func (s *MetricsService) GetGPUMetrics(ctx context.Context) ([]GPUMetric, error) {
+	return []GPUMetric{
+		{GPUName: "NVIDIA A100-SXM4-40GB", Index: 0, Temp: 65, Power: 250, Util: 45, MemoryUsed: 32 * 1024, MemoryTotal: 40 * 1024},
+	}, nil
+}
+
+type GPUMetric struct {
+	GPUName     string `json:"gpuName"`
+	Index       int    `json:"index"`
+	Temp        int    `json:"temp"`
+	Power       int    `json:"power"`
+	Util        int    `json:"util"`
+	MemoryUsed  int64  `json:"memoryUsed"`
+	MemoryTotal int64  `json:"memoryTotal"`
+}
+
+type NodeMetrics struct {
+	NodeName    string  `json:"nodeName"`
+	CPUUsage    float64 `json:"cpuUsage"`
+	MemoryUsage float64 `json:"memoryUsage"`
+	DiskUsage   float64 `json:"diskUsage"`
+	DiskIOPS    int     `json:"diskIOPS"`
+}
+
+func (s *MetricsService) GetNodeMetrics(ctx context.Context) ([]NodeMetrics, error) {
+	return []NodeMetrics{
+		{NodeName: "gpu-node-01", CPUUsage: 45.5, MemoryUsage: 62.3, DiskUsage: 35.0, DiskIOPS: 1500},
 	}, nil
 }

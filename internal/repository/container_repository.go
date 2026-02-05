@@ -67,6 +67,29 @@ func (r *ContainerRepository) FindByUserID(ctx context.Context, userID uuid.UUID
 	return containers, total, nil
 }
 
+func (r *ContainerRepository) FindByProjectID(ctx context.Context, projectID uuid.UUID, limit, offset int) ([]models.ContainerInstance, int64, error) {
+	var containers []models.ContainerInstance
+	var total int64
+
+	query := r.db.WithContext(ctx).Model(&models.ContainerInstance{}).Where("project_id = ?", projectID)
+	query.Count(&total)
+
+	err := query.
+		Preload("User").
+		Preload("Template").
+		Preload("GPUServer").
+		Limit(limit).
+		Offset(offset).
+		Order("created_at DESC").
+		Find(&containers).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return containers, total, nil
+}
+
 func (r *ContainerRepository) Update(ctx context.Context, container *models.ContainerInstance) error {
 	return r.db.WithContext(ctx).Save(container).Error
 }

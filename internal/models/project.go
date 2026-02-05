@@ -11,6 +11,7 @@ type Project struct {
 	ID          uuid.UUID      `json:"id" gorm:"type:uuid;primaryKey"`
 	Name        string         `json:"name" gorm:"size:100;uniqueIndex:idx_project_name"`
 	Description string         `json:"description" gorm:"size:1000"`
+	OwnerID     string         `json:"ownerId" gorm:"size:36"`
 	QuotaConfig QuotaConfig    `json:"quotaConfig" gorm:"type:jsonb"`
 	Status      string         `json:"status" gorm:"size:20;default:'active'"`
 	CreatedAt   time.Time      `json:"createdAt"`

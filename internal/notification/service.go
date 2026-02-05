@@ -16,12 +16,15 @@ type NotificationService struct {
 }
 
 type Notification struct {
+	ID        string                 `json:"id"`
 	Type      string                 `json:"type"`
 	Title     string                 `json:"title"`
 	Message   string                 `json:"message"`
-	Recipient string                 `json:"recipient"`
+	UserID    string                 `json:"userId"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	SentAt    time.Time              `json:"sentAt"`
+	IsRead    bool                   `json:"isRead"`
+	ReadAt    *time.Time             `json:"readAt"`
+	CreatedAt time.Time              `json:"createdAt"`
 }
 
 type EmailNotification struct {
@@ -98,17 +101,27 @@ func (s *NotificationService) NotifyContainerStopped(ctx context.Context, userEm
 func (s *NotificationService) NotifyGPUHighTemperature(ctx context.Context, adminEmail, serverName string, temperature int) error {
 	return s.SendEmail(ctx, &EmailNotification{
 		To:      adminEmail,
-		Subject: "GPU 高温警告",
+		Subject: "[警告] GPU 高温告警",
 		Body:    fmt.Sprintf("服务器 %s 的 GPU 温度已达到 %d°C，请及时处理。", serverName, temperature),
 		HTML:    false,
 	})
 }
 
 func (s *NotificationService) NotifyResourceQuotaWarning(ctx context.Context, userEmail string, used, limit int, resourceType string) error {
+	percentage := float64(used) / float64(limit) * 100
 	return s.SendEmail(ctx, &EmailNotification{
 		To:      userEmail,
-		Subject: "资源配额警告",
-		Body:    fmt.Sprintf("您的 %s 使用量 (%d) 已接近配额限制 (%d)。请及时清理资源或申请更多配额。", resourceType, used, limit),
+		Subject: "[警告] 资源配额使用率过高",
+		Body:    fmt.Sprintf("您的 %s 使用量已超过 %.1f%% 的配额限制。\n\n当前使用: %d\n配额限制: %d\n\n请及时清理不需要的资源或申请更多配额。", resourceType, percentage, used, limit),
+		HTML:    false,
+	})
+}
+
+func (s *NotificationService) NotifyWelcome(ctx context.Context, userEmail, userName string) error {
+	return s.SendEmail(ctx, &EmailNotification{
+		To:      userEmail,
+		Subject: "欢迎使用 GPU 容器平台",
+		Body:    fmt.Sprintf("%s，您好！欢迎加入 GPU 容器平台！", userName),
 		HTML:    false,
 	})
 }
