@@ -10,7 +10,7 @@
 
 一个类似 AutoDL 的 GPU 容器化服务管理平台，支持 GPU 资源池管理、容器实例生命周期管理、容器模板定制等功能。
 
-[English](README.md) | 简体中文
+[English](README.en.md) | 简体中文
 
 </div>
 
